@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="gV1OmwHH1B1Dg1NbjqBUi7">
+<head data-page-node-id="u0XjH2zZsusAVmnZd0DEBV">
+<meta charset="UTF-8" data-page-node-id="xVPpe1S2koHqkMddDlwuoC">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="7G3ETzm683vHdEjkGEeUjA">
+<title>WorkBuddy 积分工作台</title>
+<style>
+  :root {
+    --primary: #388DF6;
+    --green: #10B981;
+    --amber: #F59E0B;
+    --red: #EF4444;
+    --title: #111827;
+    --text: #4B5563;
+    --border: #E5E7EB;
+    --muted: #9CA3AF;
+    --bg: #F6FAFC;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.5; padding-bottom: 40px;
+  }
+  svg { display: block; }
+
+  /* ---------- 顶部工具栏 ---------- */
+  .topbar {
+    position: sticky; top: 0; z-index: 40; background: var(--card);
+    border-bottom: 1px solid var(--border); padding: 0 24px;
+  }
+  .topbar-inner {
+    max-width: 1500px; margin: 0 auto; display: flex; align-items: center;
+    gap: 12px; padding: 10px 0; flex-wrap: wrap; min-height: 60px;
+  }
+  .logo, .seg, .btn, .user-chip { flex-shrink: 0; }
+  .logo { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 700; color: var(--title); margin-right: 8px; }
+  .logo-img { width: 38px; height: 38px; border-radius: 10px; object-fit: cover; margin-right: 4px; }
+  .tb-actions { flex: 1 1 100%; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .tb-group { display: flex; align-items: center; gap: 8px; }
+  .tb-divider { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+  .seg { display: inline-flex; background: #f1f5f9; border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .seg button {
+    padding: 5px 12px; border: none; background: transparent; color: var(--text);
+    font-size: 12.5px; border-radius: 6px; cursor: pointer;
+  }
+  .seg button.active { background: var(--primary); color: #fff; }
+  .btn {
+    padding: 7px 13px; border: 1px solid var(--border); background: #fff; color: var(--text);
+    border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--primary); color: var(--primary); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover { opacity: .9; color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .date-input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; font-size: 12.5px; color: var(--text); }
+  .user-chip { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--border); margin-left: auto; }
+  .user-avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg,#388DF6,#7c3aed); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
+  .user-name { font-size: 13px; color: var(--title); font-weight: 600; }
+  .user-tag { font-size: 10px; background: #eef2ff; color: var(--primary); border-radius: 4px; padding: 1px 5px; }
+
+  /* ---------- 吸顶导航 ---------- */
+  .nav {
+    position: sticky; top: 60px; z-index: 39; background: var(--bg);
+    border-bottom: 1px solid var(--border); padding: 0 24px;
+  }
+  .nav-inner { max-width: 1500px; margin: 0 auto; display: flex; gap: 4px; }
+  .nav a {
+    padding: 12px 14px; font-size: 13.5px; color: var(--text); text-decoration: none;
+    border-bottom: 2px solid transparent; font-weight: 500;
+  }
+  .nav a:hover { color: var(--primary); }
+  .nav a.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+  /* ---------- 主容器 ---------- */
+  .container { max-width: 1500px; margin: 0 auto; padding: 20px 24px 0; }
+  section, .panel, .grid-2 { scroll-margin-top: 130px; } /* 初始值，JS 会按实际吸顶高度覆盖 */
+
+  .summary-bar {
+    background: linear-gradient(90deg, #eef4ff, #f6faff); border: 1px solid #dbe6fd;
+    border-radius: 12px; padding: 12px 16px; font-size: 13.5px; color: var(--title);
+    margin-bottom: 20px; line-height: 1.6;
+  }
+  .summary-bar .dot { color: var(--primary); font-weight: 700; margin-right: 6px; }
+
+  /* ---------- 指标卡 ---------- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; position: relative; overflow: hidden;
+  }
+  .card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--primary); opacity: .8; }
+  .card.green::before { background: var(--green); }
+  .card.amber::before { background: var(--amber); }
+  .card.red::before { background: var(--red); }
+  .card-head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .card-head .ic { width: 22px; height: 22px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: #eef4ff; color: var(--primary); }
+  .card.green .ic { background: #e7f8f0; color: var(--green); }
+  .card.amber .ic { background: #fdf4e7; color: var(--amber); }
+  .card.red .ic { background: #fdecec; color: var(--red); }
+  .card .value { font-size: 26px; font-weight: 700; color: var(--title); line-height: 1.2; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+  /* ---------- 面板 ---------- */
+  .panel {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 20px;
+  }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .panel h2 { font-size: 15px; font-weight: 600; color: var(--title); }
+  .chart { width: 100%; height: 300px; }
+  .chart-tall { width: 100%; height: 420px; }
+  .chart-cal { width: 100%; height: 320px; }
+  .cal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .cal-cell { min-width: 0; }
+  .cal-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+  @media (max-width: 720px) { .cal-grid { grid-template-columns: 1fr; } }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .empty { color: var(--muted); text-align: center; padding: 40px 0; font-size: 14px; }
+
+  /* ---------- 表格 ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tbody tr:hover { background: #f8fafc; }
+  .num { font-variant-numeric: tabular-nums; font-family: ui-monospace, Consolas, monospace; }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 500; }
+  .tag.ok { background: #d1fae5; color: #065f46; }
+  .tag.bad { background: #fee2e2; color: #991b1b; }
+  .tag.used { background: #e5e7eb; color: #4b5563; }
+  .title-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ---------- 筛选/搜索 ---------- */
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .search-input { padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; width: 220px; }
+  .search-input:focus { outline: none; border-color: var(--primary); }
+  .select-input { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--text); background: #fff; }
+
+  /* ---------- 浪费统计小卡 ---------- */
+  .waste-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.6; }
+
+  .panel-head h2 { display: flex; align-items: center; gap: 8px; }
+  .ph-icon { display: inline-flex; color: var(--primary); }
+  .ph-icon svg { width: 16px; height: 16px; }
+  .summary-bar .ph-icon { margin-right: 4px; }
+
+  /* ---------- 分页 ---------- */
+  .pager { display: flex; align-items: center; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
+  .pager .info { color: var(--muted); font-size: 12px; margin-right: auto; }
+  .page-btn {
+    min-width: 30px; height: 30px; padding: 0 9px; border: 1px solid var(--border); background: #fff;
+    color: var(--text); border-radius: 7px; cursor: pointer; font-size: 13px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .page-btn:hover:not(:disabled):not(.active) { border-color: var(--primary); color: var(--primary); }
+  .page-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+  .page-btn:disabled { opacity: .35; cursor: not-allowed; }
+  .page-ellipsis { color: var(--muted); padding: 0 4px; font-size: 13px; }
+</style>
+</head>
+<body data-page-node-id="5o6Cghl1HZr0pBEhr9ABQ3">
+
+<!-- 顶部工具栏 -->
+<div class="topbar" data-page-node-id="OElHUsG2p1UCZHBHJy6bMA">
+  <div class="topbar-inner" data-page-node-id="OOLuvQSXtq4zJqiXfexSap">
+    <div class="logo" data-page-node-id="9niEXK3Bp6WvF5x9tERd6l"><img src="assets/workbuddy-logo.jpg" alt="WorkBuddy" class="logo-img" data-page-node-id="N9yhXt36NXM1PCK0B9yQgD">WorkBuddy 积分工作台</div>
+    <div class="user-chip" data-page-node-id="cCZJnCwkbfTSBCLRPYeRLK">
+      <div class="user-avatar" id="user-avatar" data-page-node-id="n06UDy4ZEFh25RVNlYOxT4">S</div>
+      <div data-page-node-id="jX3OFurFLEKj1i5qcXzhxF"><div class="user-name" id="user-name" data-page-node-id="6fRVaN9kfcp2oRPEiOj5nt">-</div></div>
+      <span class="user-tag" id="user-tag" data-page-node-id="9Sc7XXO5bR9XOpuwzNzk6s">个人版</span>
+    </div>
+    <div class="tb-actions" data-page-node-id="IuGQCNZeDjrEio7TQ3NXjp">
+      <div class="tb-group" data-page-node-id="VRRJDatmBfUiJzXUcOFQf8">
+        <div class="seg" id="range-seg" data-page-node-id="LYnvVdCdBapB7nkvCbrEDx">
+          <button data-range="7d" class="active" data-page-node-id="ew8nrPLQK2WfnxyiF7HkNt">7天</button>
+          <button data-range="14d" data-page-node-id="2FDFZ7VfLarIKlc7hc3d2R">14天</button>
+          <button data-range="custom" data-page-node-id="eNsXvDjOfhYoaCThKuvhwe">自定义</button>
+        </div>
+        <span id="custom-range" style="display:none; gap:6px; align-items:center;" data-page-node-id="THbr6WFTLuFwNKQpJJ0GLB">
+          <input type="date" class="date-input" id="range-start" data-page-node-id="1MX5oZqqQclU5aW4KLKk9o"> <span style="color:var(--muted)" data-page-node-id="qOz8YxsjJagqFC0Voy08VB">~</span> <input type="date" class="date-input" id="range-end" data-page-node-id="HVQKVFuY7DJeFAgfh82gGg">
+        </span>
+      </div>
+      <span class="tb-divider" data-page-node-id="72nt4UgIc1UKTUbspxaQjQ"></span>
+      <div class="tb-group" data-page-node-id="zNOlnRq7m7wYOIyJSzjMny">
+        <button class="btn" id="export-batch" data-page-node-id="E78tUpIXOuvudm9Z5Nw4kB">导出报表</button>
+        <button class="btn" id="export-usage" data-page-node-id="IuE8pyBZQMZsBUog3iuJqj">导出明细</button>
+      </div>
+      <span class="tb-divider" data-page-node-id="EO02MBK4FZQA1QzoPHXYQe"></span>
+      <button class="btn primary" id="refresh-btn" data-page-node-id="fF8HaKGe52vo94LTj6a8FP">刷新数据</button>
+    </div>
+  </div>
+</div>
+
+<!-- 吸顶分段导航 -->
+<div class="nav" data-page-node-id="JIiWDKEI5i5ePozooZreV2">
+  <div class="nav-inner" id="nav-inner" data-page-node-id="XgrnQjPLwNE9OGllD5YKiH">
+    <a href="#sec-overview" class="active" data-page-node-id="p7gxg5Lr44P0rkPFUjLGZq">数据概览</a>
+    <a href="#sec-charts" data-page-node-id="FrmOVAXaRRXeW4GyJnQokS">消耗分析</a>
+    <a href="#sec-ledger" data-page-node-id="rWa7M9C8rx1KuF5EBZzAGE">收支账本</a>
+    <a href="#sec-sessions" data-page-node-id="mi9gFJqVd2mHejEjfj1SVE">会话消耗</a>
+    <a href="#sec-batch" data-page-node-id="Ndzp1BEHyAOjMc3S1jbQNF">积分批次</a>
+  </div>
+</div>
+
+<div class="container" data-page-node-id="PO0ILgSH1nLKyiXQRpiXJZ">
+  <!-- 使用摘要 -->
+  <div class="summary-bar" id="summary-bar" style="display:none" data-page-node-id="sBD7ma0FkSQfuvsKg019IP"></div>
+
+  <!-- 核心指标卡 -->
+  <section class="cards" id="sec-overview" data-page-node-id="yZQT5a33W50GDUzYK68ris"></section>
+
+  <!-- 趋势图（每日消耗/累计消耗趋势：改用逐包追踪口径，自积累，突破 17 天窗口） -->
+  <div class="grid-2" id="sec-charts" data-page-node-id="Y1Boiy5md1pgaycVGLmaoQ">
+    <div class="panel" data-page-node-id="rIcPGFSAGGDoDfyrp0f8vE">
+      <div class="panel-head" data-page-node-id="IOHnlF9FrvwELl4aFbkqXD"><h2 data-icon="bar" data-page-node-id="xzUGQAJ1DvW5u7px20G5Yw">每日消耗</h2></div>
+      <div class="chart" id="chart-daily" data-page-node-id="RIH2lkUWxAOnpbkkTBnmPG"></div>
+    </div>
+    <div class="panel" data-page-node-id="EcSZIGIWvTGZEZ7f4kj08O">
+      <div class="panel-head" data-page-node-id="VFQF0nOI1q8G2dqAiSE2OP"><h2 data-icon="line" data-page-node-id="KCxSpUDbwKACw2dVGk5A5B">累计消耗趋势</h2></div>
+      <div class="chart" id="chart-cum" data-page-node-id="d96ixxYGBjB8E10TTH7lAy"></div>
+    </div>
+  </div>
+
+  <!-- 收支日历（按天，GitHub 贡献图风格；显示完整历史范围，不受 7/14 天过滤截断） -->
+  <div class="panel" id="sec-heat" data-page-node-id="Yi4bB8aIHjX9qGVkLUk7h3">
+    <div class="panel-head" data-page-node-id="q7dqdl88CvkmuqTWF466ZH"><h2 data-icon="heatmap" data-page-node-id="koB5lBIQQdBgBfpWNXzr6S">积分收支日历（按天）</h2></div>
+    <div class="cal-cell" data-page-node-id="8wRUAMduol33Xg20t8WLQ0">
+      <div class="cal-title" data-page-node-id="sBgARdGJXBGC8qVtMVsu0O">消耗</div>
+      <div class="chart-cal" id="chart-heat-expense" data-page-node-id="BEguGXlwV6QxK6S0k4Nkjy"></div>
+    </div>
+    <div class="cal-cell" style="margin-top:18px;" data-page-node-id="jiTKVr0DPfAoVib7ZRVskj">
+      <div class="cal-title" data-page-node-id="8e0jolVJ8v4Dj2Wk6foslR">收入</div>
+      <div class="chart-cal" id="chart-heat-income" data-page-node-id="GYai82neJVrNaWbALaU6ZX"></div>
+    </div>
+    <div class="hint" data-page-node-id="toghDDl1Df8wrE8FGBuVI1">注：日历显示全部历史范围（不受上方日期筛选影响），消耗 = 各资源包「已用积分」的逐日增量（纯消耗口径，不受签到/到账/过期干扰，自今日起每日记录、逐步积累）；收入 = 签到 + 包到账，按真实到账时间归日。</div>
+  </div>
+
+  <!-- 收支账本 -->
+  <div class="panel" id="sec-ledger" data-page-node-id="LDwPEHMAvW5uX52CGuT0Ao">
+    <div class="panel-head" data-page-node-id="13R2aNI60lJQwmjXY9PDqQ"><h2 data-icon="book" data-page-node-id="QuDSvFf7KSGO8NrQzWPvNg">收支账本（日粒度）</h2></div>
+    <table data-page-node-id="uIGxLlemZPEtC8FncRSj4r">
+      <thead data-page-node-id="uhZvaCbzNS3aFPtUZ03AWt"><tr data-page-node-id="CPwJh8rVOV4nT5jIb3qpDr"><th data-page-node-id="YxGMJqZ3YzMk8EJBlvOZKc">日期</th><th data-page-node-id="prmGmXnLsejEpDEoV9eNdt">签到</th><th data-page-node-id="Gsma0NqZk3KTuP72RPMH1f">包到账</th><th data-page-node-id="FcKC4BJ17bFGk0q8c20Qfz">支出</th><th data-page-node-id="1h6kbnHNG4nJrzDx04nDy8">净变化</th></tr></thead>
+      <tbody id="ledger-tbody" data-page-node-id="LEOQhFxtdzszVD87m8jnBW"></tbody>
+    </table>
+    <div class="pager" id="ledger-pager" data-page-node-id="4zBh9miDg1S3pHtrBq9NJ6"></div>
+  </div>
+
+  <!-- 最近会话消耗 -->
+  <div class="panel" id="sec-sessions" data-page-node-id="VvGvsE4tRyTa1CbOzjGCtw">
+    <div class="panel-head" data-page-node-id="MPueSB2m9d1lzgHHO2FbAc"><h2 data-icon="chat" data-page-node-id="o9E5SDODHuabSdop9WjEni">最近会话消耗</h2></div>
+    <table data-page-node-id="RAPJT8HssLNbJeNdbRWGfA">
+      <thead data-page-node-id="JCNW6dHhI7ciu2mYAkMwwn"><tr data-page-node-id="n6H7F58KEdnKqUcpok4deb"><th data-page-node-id="nbIZYGGRecL5owkvw0kFsq">时间</th><th data-page-node-id="xXsEjFe0V13AGO1Gj0ui2f">会话标题</th><th data-page-node-id="kWAO3dsGEXOdMwtouzGYq7">模型</th><th data-page-node-id="37JiExfw7nmzgb0ae7JP7p">消耗积分</th><th data-page-node-id="JCjQkkwfCSXSpW6gqe2kQe">调用次数</th></tr></thead>
+      <tbody id="session-tbody" data-page-node-id="ajogW8Ui7waKAGajqgvNFX"></tbody>
+    </table>
+    <div class="pager" id="session-pager" data-page-node-id="fGQThlAfn2c25U3VEzPwKN"></div>
+  </div>
+
+  <!-- 收支损失统计 -->
+  <div class="panel" id="sec-waste" data-page-node-id="Db6yD1dSwjMVBQ18ce4kAx">
+    <div class="panel-head" data-page-node-id="EN4pnVjD0YrHFz4R1u4ylw"><h2 data-icon="pie" data-page-node-id="xBF1y6318wg8lO9rAagXRG">收支损失统计</h2></div>
+    <div class="waste-grid" id="waste" data-page-node-id="fSQo8o8dFYCKuu5etaZWS5"></div>
+    <div class="hint" data-page-node-id="5EXePa9T53sCSTNrMENjXJ">注：过期浪费与到期风险按资源包到期时间计算，有效批次累计已用取自资源包 CapacityUsed 字段（不含已过期包）。</div>
+  </div>
+
+  <!-- 积分批次 -->
+  <div class="panel" id="sec-batch" data-page-node-id="dJULNcPHvYEzLg8GxLidn2">
+    <div class="panel-head" data-page-node-id="wfL3d59HmdjuACgspJnmAj">
+      <h2 data-icon="list" data-page-node-id="4jAUuOqaBP5vmFk0vqaOaC">积分批次（按到期时间升序）</h2>
+      <div class="filters" data-page-node-id="EZIlYveuMTtLp2bT8bgBuG">
+        <input type="text" class="search-input" id="batch-search" placeholder="搜索资源包 / 类型" data-page-node-id="qUaBNBsSLYPXsmsVuNrjoE">
+        <select class="select-input" id="batch-status" data-page-node-id="b9K25gEzvmofX9DRgEeX2u">
+          <option value="" data-page-node-id="e5z7z8WSOld0NVH3MNZ1VA">全部状态</option>
+          <option value="可用" data-page-node-id="0QPkvRlehTUF0YzRsVWQNq">可用</option>
+          <option value="已过期" data-page-node-id="OzEqPcJkolXMQiAwUEhXFK">已过期</option>
+          <option value="已用完" data-page-node-id="Sb0zwL0QqpujaXZZhTeX47">已用完</option>
+        </select>
+      </div>
+    </div>
+    <table data-page-node-id="ojwqlRTpC1w4GjVH1WQkJP">
+      <thead data-page-node-id="3edH4XHASUKUSA6icx49ym"><tr data-page-node-id="V4lcq6oACnGKED0BqS3VXN"><th data-page-node-id="SgkcPV3B9ahYUNYGIawybw">到期时间</th><th data-page-node-id="6Dx8fpiFIWhEMXPGzBcDD2">状态</th><th data-page-node-id="iynD2siUIbgWJm8NtdtJmK">剩余</th><th data-page-node-id="fyXBHXZlLYdSHQ3l92OWvL">已用/总量</th><th data-page-node-id="JWwLG93w1oRaVhBaKGqTds">类型</th></tr></thead>
+      <tbody id="expiry-tbody" data-page-node-id="2ZSKZYJz0iX9EeRZtg1u0I"></tbody>
+    </table>
+    <div class="pager" id="expiry-pager" data-page-node-id="abrMACsCL4ybTDMTtg2Jnh"></div>
+  </div>
+</div>
+
+<script src="assets/echarts.min.js"></script>
+<script src="dashboard_data.js"></script>
+<script>
+(function () {
+  let DATA = window.CREDITS_DATA || null;
+  let dateRange = { type: '7d', start: null, end: null };
+
+  function fmtDate(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+  function todayStr() { return fmtDate(new Date()); }
+  function addDays(dateStr, n) {
+    const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() + n);
+    return fmtDate(d);
+  }
+  function computeRange() {
+    if (dateRange.type === '7d') { dateRange.end = todayStr(); dateRange.start = addDays(dateRange.end, -6); }
+    else if (dateRange.type === '14d') { dateRange.end = todayStr(); dateRange.start = addDays(dateRange.end, -13); }
+    else {
+      // 自定义：限制最长 30 天
+      let s = document.getElementById('range-start').value || dateRange.start;
+      let e = document.getElementById('range-end').value || dateRange.end;
+      if (s && e) {
+        const days = Math.round((new Date(e + 'T00:00:00') - new Date(s + 'T00:00:00')) / 86400000);
+        if (days > 30) {
+          e = addDays(s, 30);
+          document.getElementById('range-end').value = e;
+          alert('自定义范围最长 30 天，已自动调整结束日期');
+        }
+      }
+      dateRange.start = s; dateRange.end = e;
+    }
+  }
+  function inRange(dateStr) {
+    if (!dateStr || !dateRange.start || !dateRange.end) return true;
+    return dateStr >= dateRange.start && dateStr <= dateRange.end;
+  }
+
+  // ---------- 通用分页 ----------
+  function setupPager(pagerId, totalItems, pageSize, renderBody) {
+    const pager = document.getElementById(pagerId);
+    pager.innerHTML = '';
+    if (totalItems === 0) { renderBody(1); return; }
+    let cur = 1;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    function pageNumbers(current, total) {
+      const delta = 2, pages = [];
+      for (let i = 1; i <= total; i++) { if (i === 1 || i === total || (i >= current - delta && i <= current + delta)) pages.push(i); }
+      const out = []; let last = 0;
+      pages.forEach(function (i) { if (i - last > 1) out.push('...'); out.push(i); last = i; });
+      return out;
+    }
+    function render() {
+      renderBody(cur);
+      let html = '<span class="info">共 ' + totalItems + ' 条 · 第 ' + cur + ' / ' + totalPages + ' 页</span>';
+      html += '<button class="page-btn" data-page="' + (cur - 1) + '"' + (cur === 1 ? ' disabled' : '') + '>上一页</button>';
+      pageNumbers(cur, totalPages).forEach(function (p) {
+        if (p === '...') html += '<span class="page-ellipsis">…</span>';
+        else html += '<button class="page-btn' + (p === cur ? ' active' : '') + '" data-page="' + p + '">' + p + '</button>';
+      });
+      html += '<button class="page-btn" data-page="' + (cur + 1) + '"' + (cur === totalPages ? ' disabled' : '') + '>下一页</button>';
+      pager.innerHTML = html;
+    }
+    pager.addEventListener('click', function (e) {
+      const btn = e.target.closest('.page-btn');
+      if (!btn || btn.disabled) return;
+      const p = parseInt(btn.getAttribute('data-page'), 10);
+      if (p >= 1 && p <= totalPages) { cur = p; render(); }
+    });
+    render();
+  }
+
+  function initChart(id) {
+    const el = document.getElementById(id);
+    let inst = echarts.getInstanceByDom(el);
+    if (inst) inst.dispose();
+    return echarts.init(el);
+  }
+
+  function escCsv(v) {
+    const s = String(v == null ? '' : v);
+    if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  function exportCSV(filename, headers, rows) {
+    const csv = [headers.map(escCsv).join(',')].concat(rows.map(function (r) { return r.map(escCsv).join(','); })).join('\r\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const ICONS = {
+    wallet: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>',
+    bolt: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>',
+    clock: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+    chart: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>',
+    alert: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+    loss: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 11l-5 5-5-5"/><path d="M12 16V4"/><path d="M19 20H5"/></svg>',
+    cal: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+    info: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+    bar: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="13" width="3" height="5"/><rect x="12" y="9" width="3" height="9"/><rect x="17" y="5" width="3" height="13"/></svg>',
+    line: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 5-7"/></svg>',
+    heatmap: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h7v7"/><path d="M10 3v7h7"/><path d="M17 10v7"/></svg>',
+    book: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 17.5V4A2.5 2.5 0 0 1 6.5 2"/></svg>',
+    chat: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+    pie: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>',
+    list: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
+    user: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 7-7h2a7 7 0 0 1 7 7v1"/></svg>',
+  };
+  function ic(k) { return '<span class="ic">' + (ICONS[k] || ICONS.info) + '</span>'; }
+
+  // ---------- 主渲染 ----------
+  function renderAll(D) {
+    DATA = D;
+    computeRange();
+
+    // 给面板标题注入图标（幂等，避免重复调用时叠加 span）
+    document.querySelectorAll('[data-icon]').forEach(function (h) {
+      const key = h.getAttribute('data-icon');
+      if (ICONS[key] && !h.querySelector('.ph-icon')) {
+        const label = h.textContent;
+        h.innerHTML = '<span class="ph-icon">' + ICONS[key] + '</span><span>' + label + '</span>';
+      }
+    });
+
+    // 账号
+    const nick = D.nickname || '-';
+    document.getElementById('user-name').textContent = nick;
+    document.getElementById('user-avatar').textContent = nick.slice(0, 1).toUpperCase();
+    // 用户标签：根据 account.type 显示（personal=个人版，其他显示原值）
+    const acctType = D.account_type || '';
+    const tag = acctType === 'personal' ? '个人版' : (acctType || '—');
+    document.getElementById('user-tag').textContent = tag;
+
+    // 使用摘要
+    const sb = document.getElementById('summary-bar');
+    if (D.summary) { sb.innerHTML = '<span class="ph-icon" style="color:var(--primary); vertical-align:middle; margin-right:4px;">' + ICONS.info + '</span><span class="dot">◆</span>' + D.summary; sb.style.display = 'block'; }
+    else { sb.style.display = 'none'; }
+
+    // 指标卡
+    const w = D.waste || {};
+    const cards = [
+      { cls: '', icon: 'wallet', label: '可用积分', value: (D.total_remain || 0).toFixed(2), sub: '可用包 ' + (D.avail_count || 0) + ' 个' },
+      { cls: '', icon: 'bolt', label: '今日已使用', value: D.today_used != null ? D.today_used.toFixed(2) : '—', sub: '刷新即实时统计' },
+      { cls: '', icon: 'clock', label: '预计可用天数', value: D.days_left != null ? D.days_left + ' 天' : '—', sub: '近7天日均 ' + (D.daily_avg || 0).toFixed(1) + ' 积分' },
+      { cls: '', icon: 'chart', label: '累计消耗', value: (D.total_used || 0).toFixed(2), sub: '云端有效批次累计已用（逐包口径）' },
+      { cls: 'amber', icon: 'alert', label: '即将到期（7天内）', value: w.at_risk_count || 0, sub: '涉及 ' + (w.at_risk || 0).toFixed(2) + ' 积分' },
+      { cls: 'red', icon: 'loss', label: '已过期损失', value: (w.wasted || 0).toFixed(2), sub: '已过期未用完 ' + (w.wasted_count || 0) + ' 批' },
+      { cls: 'green', icon: 'cal', label: '今日签到', value: (D.checkin && D.checkin.today_checked_in) ? '已签到' : '未签到', sub: '连续 ' + (D.checkin ? D.checkin.streak_days : 0) + ' 天 · 每日 +' + (D.checkin ? D.checkin.daily_credit : 0) },
+      // 用户信息（来自 account：nickname / type）
+      { cls: '', icon: 'user', label: '当前账号', value: (D.nickname || '-'), sub: (D.account_type === 'personal' ? '个人版' : (D.account_type || '—')) },
+    ];
+    document.getElementById('sec-overview').innerHTML = cards.map(function (c) {
+      return '<div class="card ' + c.cls + '"><div class="card-head">' + ic(c.icon) + '<span>' + c.label + '</span></div>' +
+             '<div class="value">' + c.value + '</div><div class="sub">' + c.sub + '</div></div>';
+    }).join('');
+
+    // 收支损失统计
+    document.getElementById('waste').innerHTML = [
+      { cls: 'red', icon: 'loss', k: '已过期未用完', v: (w.wasted || 0).toFixed(2) + ' 积分', d: (w.wasted_count || 0) + ' 批' },
+      { cls: 'amber', icon: 'alert', k: '未来 7 天到期风险', v: (w.at_risk || 0).toFixed(2) + ' 积分', d: (w.at_risk_count || 0) + ' 批' },
+      { cls: '', icon: 'chart', k: '有效批次累计已用', v: (D.total_used || 0).toFixed(2) + ' 积分', d: '资源包视角（不含已过期包）' },
+      { cls: 'green', icon: 'cal', k: '签到活动', v: (D.checkin && D.checkin.activity_name) || '-', d: (D.checkin && D.checkin.theme_name) || '' },
+    ].map(function (x) {
+      return '<div class="card ' + x.cls + '"><div class="card-head">' + ic(x.icon) + '<span>' + x.k + '</span></div>' +
+             '<div class="value" style="font-size:19px">' + x.v + '</div><div class="sub">' + x.d + '</div></div>';
+    }).join('');
+
+    // 每日消耗 / 累计消耗趋势（逐包追踪口径，自积累）
+    const dailyUsage = (D.usage_daily || []).filter(function (x) { return inRange(x.date); });
+    const hasUsage = dailyUsage.some(function (x) { return x.credit > 0; });
+    const dailyChart = initChart('chart-daily');
+    if (hasUsage) {
+      dailyChart.setOption({
+        grid: { left: 50, right: 20, top: 20, bottom: 30 }, tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: dailyUsage.map(function (x) { return x.date; }), axisLabel: { fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11, formatter: function (v) { return v.length >= 10 ? v.slice(5) : v; } } },
+        yAxis: { type: 'value', name: '积分' },
+        series: [{ name: '每日消耗', type: 'bar', data: dailyUsage.map(function (x) { return { value: x.credit, itemStyle: { color: '#388DF6' } }; }), barMaxWidth: 26 }],
+      });
+    } else { document.getElementById('chart-daily').innerHTML = '<div class="empty">暂无消耗数据（自今日起每日积累，明天起呈现逐日消耗）</div>'; }
+
+    const cumChart = initChart('chart-cum');
+    if (hasUsage) {
+      let cum = 0;
+      const cumData = dailyUsage.map(function (x) { cum += x.credit; return +cum.toFixed(2); });
+      cumChart.setOption({
+        grid: { left: 50, right: 20, top: 20, bottom: 30 }, tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: dailyUsage.map(function (x) { return x.date; }), boundaryGap: false, axisLabel: { fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11, formatter: function (v) { return v.length >= 10 ? v.slice(5) : v; } } },
+        yAxis: { type: 'value', name: '积分' },
+        series: [{ name: '累计消耗', type: 'line', smooth: true, data: cumData, lineStyle: { color: '#10B981', width: 2 }, itemStyle: { color: '#10B981' }, areaStyle: { color: 'rgba(16,185,129,0.08)' } }],
+      });
+    } else { document.getElementById('chart-cum').innerHTML = '<div class="empty">暂无消耗数据</div>'; }
+
+    // 收支日历（按天，GitHub 贡献图风格）。显示完整数据范围（不受 7/14 天过滤截断）。
+    const dailyCal = (D.usage_daily || []);       // 逐包追踪口径，完整范围
+    const incomeCal = (D.income_daily || []);     // 自积累账本，完整范围
+    const heatChartExp = initChart('chart-heat-expense');
+    const heatChartInc = initChart('chart-heat-income');
+    const hasExp = dailyCal.some(function (x) { return x.credit > 0; });
+    const hasInc = incomeCal.some(function (x) { return x.income > 0; });
+
+    function calBaseOption(calData) {
+      return {
+        calendar: {
+          top: 30,
+          left: 40,
+          right: 20,
+          bottom: 70,
+          range: [calData[0].date, calData[calData.length - 1].date],
+          cellSize: ['auto', 22],
+          yearLabel: { show: false },
+          dayLabel: { firstDay: 1, nameMap: ['日', '一', '二', '三', '四', '五', '六'], fontSize: 10 },
+          monthLabel: { nameMap: 'cn', fontSize: 11 },
+          itemStyle: { color: '#f1f3f7', borderColor: '#e5e7eb', borderWidth: 1 },
+        },
+        tooltip: { formatter: function (p) { return p.value[0] + '<br/>' + p.value[2] + ' <b>' + p.value[1].toFixed(2) + '</b> 积分'; } },
+      };
+    }
+
+    if (hasExp && dailyCal.length) {
+      heatChartExp.setOption(Object.assign(calBaseOption(dailyCal), {
+        visualMap: {
+          type: 'piecewise', dimension: 1, pieces: [
+            { min: 0, max: 50, color: '#dbeafe', label: '<50' },
+            { min: 50, max: 200, color: '#93c5fd', label: '50-200' },
+            { min: 200, max: 1000, color: '#388DF6', label: '200-1k' },
+            { min: 1000, max: 99999, color: '#1e3a8a', label: '≥1k' },
+          ],
+          orient: 'horizontal', left: 'center', bottom: 10, textStyle: { fontSize: 10 },
+        },
+        series: [{
+          type: 'heatmap', coordinateSystem: 'calendar',
+          data: dailyCal.filter(function (x) { return x.credit > 0; }).map(function (x) { return [x.date, x.credit, '消耗']; }),
+          label: { show: false },
+        }],
+      }));
+    } else { document.getElementById('chart-heat-expense').innerHTML = '<div class="empty">暂无消耗数据（自今日起积累）</div>'; }
+
+    if (hasInc && incomeCal.length) {
+      heatChartInc.setOption(Object.assign(calBaseOption(incomeCal), {
+        visualMap: {
+          type: 'piecewise', dimension: 1, pieces: [
+            { min: 0, max: 50, color: '#d1fae5', label: '<50' },
+            { min: 50, max: 200, color: '#6ee7b7', label: '50-200' },
+            { min: 200, max: 1000, color: '#10B981', label: '200-1k' },
+            { min: 1000, max: 99999, color: '#065f46', label: '≥1k' },
+          ],
+          orient: 'horizontal', left: 'center', bottom: 10, textStyle: { fontSize: 10 },
+        },
+        series: [{
+          type: 'heatmap', coordinateSystem: 'calendar',
+          data: incomeCal.filter(function (x) { return x.income > 0; }).map(function (x) { return [x.date, x.income, '收入']; }),
+          label: { show: false },
+        }],
+      }));
+    } else { document.getElementById('chart-heat-income').innerHTML = '<div class="empty">所选范围内暂无收入记录</div>'; }
+
+    // 收支账本（按日期过滤，倒序，分页）
+    const ledger = (D.ledger || []).filter(function (x) { return inRange(x.date); }).slice().reverse();
+    setupPager('ledger-pager', ledger.length, 14, function (page) {
+      const start = (page - 1) * 14;
+      document.getElementById('ledger-tbody').innerHTML = ledger.slice(start, start + 14).map(function (r) {
+        const netCls = r.net >= 0 ? 'pos' : 'neg';
+        const netStr = (r.net >= 0 ? '+' : '') + r.net.toFixed(2);
+        return '<tr><td class="num">' + r.date + '</td><td class="num pos">+' + (r.sign_in || 0).toFixed(2) + '</td><td class="num pos">+' + (r.package_in || 0).toFixed(2) + '</td><td class="num neg">-' + r.expense.toFixed(2) + '</td><td class="num ' + netCls + '">' + netStr + '</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="empty">所选范围内暂无账本数据</td></tr>';
+    });
+
+    // 最近会话（按日期过滤，分页）
+    const sessions = (D.usage_sessions || []).filter(function (x) { return inRange(x.date); });
+    setupPager('session-pager', sessions.length, 10, function (page) {
+      const start = (page - 1) * 10;
+      document.getElementById('session-tbody').innerHTML = sessions.slice(start, start + 10).map(function (s) {
+        return '<tr><td class="num">' + (s.time || '-') + '</td><td class="title-cell" title="' + (s.title || '') + '">' + (s.title || '-') + '</td><td class="num">' + (s.model || '-') + '</td><td class="num">' + s.credit.toFixed(2) + '</td><td class="num">' + s.n_calls + '</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="empty">所选范围内暂无会话记录</td></tr>';
+    });
+
+    // 积分批次（搜索 + 状态筛选 + 分页）
+    renderBatch();
+  }
+
+  const statusCls = { '可用': 'ok', '已过期': 'bad', '已用完': 'used' };
+  function renderBatch() {
+    if (!DATA) return;
+    const q = (document.getElementById('batch-search').value || '').toLowerCase();
+    const st = document.getElementById('batch-status').value;
+    const list = (DATA.expiry_list || []).filter(function (p) {
+      const okQ = !q || (p.name || '').toLowerCase().includes(q) || (p.label || '').toLowerCase().includes(q);
+      const okS = !st || p.status === st;
+      return okQ && okS;
+    });
+    setupPager('expiry-pager', list.length, 15, function (page) {
+      const start = (page - 1) * 15;
+      document.getElementById('expiry-tbody').innerHTML = list.slice(start, start + 15).map(function (p) {
+        const tag = statusCls[p.status] || 'used';
+        return '<tr><td class="num">' + (p.cycle_end || '-') + '</td><td><span class="tag ' + tag + '">' + p.status + '</span></td><td class="num">' + p.remain.toFixed(2) + '</td><td class="num">' + p.used.toFixed(2) + '/' + p.size.toFixed(2) + '</td><td>' + p.label + '</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="empty">无匹配批次</td></tr>';
+    });
+  }
+
+  // ---------- 交互 ----------
+  // file:// 协议下 fetch 不可用，改用 script 标签加载同目录的 dashboard_data.js
+  function loadData() {
+    if (location.protocol === 'file:') {
+      return new Promise(function (resolve, reject) {
+        const s = document.createElement('script');
+        s.src = 'dashboard_data.js?t=' + Date.now();
+        s.onload = function () { resolve(window.CREDITS_DATA || {}); };
+        s.onerror = function () { reject(new Error('无法读取 dashboard_data.js，请先运行 render 生成数据')); };
+        document.head.appendChild(s);
+      });
+    }
+    return fetch('/api/data', { cache: 'no-store' }).then(function (r) { return r.json(); });
+  }
+
+  document.getElementById('refresh-btn').addEventListener('click', function () {
+    const btn = this;
+    btn.disabled = true; btn.textContent = '刷新中…';
+    loadData()
+      .then(function (data) { if (data && data.error) { alert('刷新失败：' + data.error); return; } renderAll(data); })
+      .catch(function (e) { alert('无法加载数据：' + (e.message || e) + '\n\n如通过 HTTP 访问，请先运行：python scripts/serve.py\n如通过 file:// 访问，请先运行：python scripts/workbuddy_credits.py render 生成 dashboard_data.js'); })
+      .finally(function () { btn.disabled = false; btn.textContent = '刷新数据'; });
+  });
+
+  document.getElementById('range-seg').addEventListener('click', function (e) {
+    const btn = e.target.closest('button'); if (!btn) return;
+    this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    dateRange.type = btn.getAttribute('data-range');
+    document.getElementById('custom-range').style.display = dateRange.type === 'custom' ? 'inline-flex' : 'none';
+    syncSticky(); // 显示自定义日期输入框后 topbar 可能变高，重新同步吸顶偏移
+    if (dateRange.type !== 'custom' && DATA) renderAll(DATA);
+  });
+  ['range-start', 'range-end'].forEach(function (id) {
+    document.getElementById(id).addEventListener('change', function () { if (DATA) renderAll(DATA); });
+  });
+
+  document.getElementById('batch-search').addEventListener('input', renderBatch);
+  document.getElementById('batch-status').addEventListener('change', renderBatch);
+
+  document.getElementById('export-batch').addEventListener('click', function () {
+    if (!DATA) return;
+    const rows = (DATA.expiry_list || []).map(function (p) {
+      return [p.cycle_end || '', p.status, p.remain.toFixed(2), p.used.toFixed(2), p.size.toFixed(2), p.label, p.name || ''];
+    });
+    exportCSV('积分批次.csv', ['到期时间', '状态', '剩余', '已用', '总量', '类型', '资源包'], rows);
+  });
+  document.getElementById('export-usage').addEventListener('click', function () {
+    if (!DATA) return;
+    const rows = (DATA.usage_sessions || []).map(function (s) {
+      return [s.time || '', s.title || '', s.model || '', s.credit.toFixed(2), s.n_calls];
+    });
+    exportCSV('积分消耗明细.csv', ['时间', '会话标题', '模型', '消耗积分', '调用次数'], rows);
+  });
+
+  // 吸顶偏移动态同步：topbar 换行后高度变化时，nav 的 top 与 scroll-margin-top 跟随
+  function syncSticky() {
+    const tb = document.querySelector('.topbar');
+    const nav = document.querySelector('.nav');
+    if (!tb || !nav) return;
+    const th = tb.offsetHeight;
+    nav.style.top = th + 'px';
+    const h = th + nav.offsetHeight + 14;
+    document.querySelectorAll('section, .panel, .grid-2').forEach(function (el) {
+      el.style.scrollMarginTop = h + 'px';
+    });
+  }
+  syncSticky();
+  window.addEventListener('resize', syncSticky);
+
+  // 吸顶导航
+  document.getElementById('nav-inner').addEventListener('click', function (e) {
+    const a = e.target.closest('a'); if (!a) return;
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  const navLinks = document.querySelectorAll('#nav-inner a');
+  const sectionToNav = {
+    'sec-overview': '数据概览',
+    'sec-charts': '消耗分析',
+    'sec-heat': '消耗分析',
+    'sec-ledger': '收支账本',
+    'sec-sessions': '会话消耗',
+    'sec-waste': '收支账本',
+    'sec-batch': '积分批次',
+  };
+  function updateActiveNav() {
+    const offset = 130; // topbar 60 + nav 60 + 余量
+    let activeNav = null;
+    Object.keys(sectionToNav).forEach(function (id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      if (top - offset <= 0) activeNav = sectionToNav[id];
+    });
+    // 滚到页面底部时强制激活最后一个 section，避免其顶部 > offset 无法触发
+    if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 8) {
+      activeNav = '积分批次';
+    }
+    if (activeNav) {
+      navLinks.forEach(function (a) { a.classList.toggle('active', a.textContent.trim() === activeNav); });
+    }
+  }
+  let scrollTimer = null;
+  window.addEventListener('scroll', function () {
+    if (scrollTimer) return;
+    scrollTimer = setTimeout(function () { updateActiveNav(); scrollTimer = null; }, 50);
+  }, { passive: true });
+  updateActiveNav();
+
+  window.addEventListener('resize', function () {
+    ['chart-daily', 'chart-cum', 'chart-heat-expense', 'chart-heat-income'].forEach(function (id) {
+      const inst = echarts.getInstanceByDom(document.getElementById(id));
+      if (inst) inst.resize();
+    });
+  });
+
+  // 初始渲染
+  if (DATA) { renderAll(DATA); }
+  else {
+    document.getElementById('summary-bar').textContent = '正在加载…';
+    document.getElementById('refresh-btn').click();
+  }
+})();
+</script>
+</body>
+</html>

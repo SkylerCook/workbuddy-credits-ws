@@ -1,0 +1,18 @@
+name: workbuddy-credits
+slug: workbuddy-credits
+version: 1.0.0
+category: 效率工具
+author: Skyler Cook
+description: 查询 WorkBuddy/CodeBuddy 积分余额与批次明细，支持自动签到、余额快照、过期浪费分析与可视化工作台。
+tags:
+  - 积分
+  - WorkBuddy
+  - 签到
+  - 效率
+  - 可视化
+trigger:
+  - 我的积分
+  - 积分余额
+  - 积分明细
+  - 签到领积分
+  - 积分快过期了

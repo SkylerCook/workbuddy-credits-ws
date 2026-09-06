@@ -1,0 +1,18 @@
+# ---- 用户数据（render 产物，含真实积分/昵称，不入库）----
+dashboard_data.js
+dashboard_inline.html
+
+# ---- Python 缓存 ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- 系统/编辑器 ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# ---- 本地运行日志 ----
+*.log
