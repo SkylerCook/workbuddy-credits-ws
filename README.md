@@ -30,8 +30,10 @@
 ### 方式 A：Git 克隆（推荐）
 
 ```bash
-git clone <仓库地址> ~/.workbuddy/skills/workbuddy-credits
+git clone https://github.com/SkylerCook/workbuddy-credits-ws.git ~/.workbuddy/skills/workbuddy-credits
 ```
+
+> 或直接下载仓库内 `dist/workbuddy-credits.zip` 离线解压安装（见方式 B）。
 
 克隆后确认最终结构为 `~/.workbuddy/skills/workbuddy-credits/SKILL.md`，重启 WorkBuddy 客户端（或等它自动刷新）即可。
 
