@@ -65,6 +65,11 @@ DASHBOARD_DATA_FILE = os.path.join(SKILL_DIR, "dashboard_data.js")
 def auth_candidates():
     home = os.path.expanduser("~")
     cands = []
+    # 环境变量覆盖（最高优先级）：WORKBUDDY_AUTH_FILE 直接指定登录态文件路径。
+    # 用于后台进程被沙箱拦截读 C 盘登录态的 Windows 环境，指向非 C 盘副本。
+    override = os.environ.get("WORKBUDDY_AUTH_FILE")
+    if override:
+        cands.append(override)
     if sys.platform == "darwin":
         base = os.path.join(home, "Library", "Application Support",
                             "CodeBuddyExtension", "Data", "Public", "auth")
