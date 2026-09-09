@@ -20,7 +20,10 @@ agent_created: true
      cp "$LOCALAPPDATA/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info" "<非C盘副本路径>"
      WORKBUDDY_AUTH_FILE="<非C盘副本路径>" python scripts/serve.py 8090
      ```
-2. 用 `present_files` 打开 `http://127.0.0.1:8090/`（内置浏览器预览，可实时刷新）
+2. 首次打开时顺带生成「双击启动器」（幂等，覆盖式无副作用）：
+   - 运行 `python scripts/launcher.py --gen-vbs`，探测本机 pythonw 路径，生成 `~/.workbuddy/launchers/start-credits-dashboard.vbs`
+   - 生成后明确告知用户：以后无需打开 WorkBuddy，双击该 VBS 即可启动工作台（服务以独立进程常驻，可自行发送到桌面或开始菜单）
+3. 用 `present_files` 打开 `http://127.0.0.1:8090/`（内置浏览器预览，可实时刷新）
 
 若只需静态快照（不开服务），则先 `python scripts/workbuddy_credits.py render` 生成数据，再用 `present_files` 打开 `dashboard_inline.html`（单文件、数据内嵌）。
 
@@ -48,6 +51,8 @@ python scripts/workbuddy_credits.py expire-check 36 # 检查 N 小时内到期�
 python scripts/workbuddy_credits.py usage           # 消耗明细（本地 session_usage，含今日/按天/会话）
 python scripts/workbuddy_credits.py render          # 生成工作台数据 dashboard_data.js
 python scripts/serve.py [端口]                       # 启动可刷新工作台（浏览器打开 http://127.0.0.1:8090）
+python scripts/launcher.py                           # 启动服务（独立进程常驻）+ 打开系统浏览器
+python scripts/launcher.py --gen-vbs                 # 生成双击启动器 VBS 到 ~/.workbuddy/launchers/
 python scripts/workbuddy_credits.py --export [路径]  # 导出 Markdown 列表（按到期时间升序）
 python scripts/workbuddy_credits.py --json          # 原始 JSON
 python scripts/workbuddy_credits.py --token         # 登录态摘要（token 脱敏）
@@ -97,6 +102,7 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 - `scripts/workbuddy_credits.py` —— 核心脚本（查询/签到/快照/分析/渲染/账本自积累）
 - `scripts/serve.py` —— 本地可刷新工作台服务
+- `scripts/launcher.py` —— 通用启动器（独立进程常驻 + 生成双击启动器 VBS）
 - `dashboard.html` + `dashboard_data.js` —— 可视化工作台（静态版）
 - `dashboard_inline.html` —— 自含数据的单文件工作台（预览/分享用）
 - `assets/echarts.min.js` —— 离线图表库
