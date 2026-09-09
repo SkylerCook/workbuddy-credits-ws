@@ -8,6 +8,8 @@
      —— 供「双击 VBS」场景使用，服务以独立进程（DETACHED）常驻，脱离 WorkBuddy 桌面端
   2. --gen-vbs：探测本机 pythonw 路径，生成双击启动器 VBS 到专门目录
      —— 供 Agent 首次打开工作台时顺带生成（幂等），告知用户以后可双击启动
+  3. --create-shortcut <desktop|startmenu>：创建快捷方式到桌面 / 开始菜单「所有应用」
+     —— 供 Agent 对话入口（复用 shortcut.py）
 
 设计要点：
   - 零硬编码：serve.py 用 __file__ 同级定位；pythonw 用 sys.executable 同目录推导
@@ -23,6 +25,9 @@ import webbrowser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SERVE = os.path.join(HERE, "serve.py")
+sys.path.insert(0, HERE)
+
+from shortcut import create_shortcut  # noqa: E402
 PORT = 8090
 URL = "http://127.0.0.1:%d" % PORT
 VBS_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy", "launchers")
@@ -110,9 +115,21 @@ def start_and_open():
     return 0 if ok else 1
 
 
+def create_shortcut_cmd(target):
+    """创建快捷方式到桌面 / 开始菜单。返回进程退出码。"""
+    ok, msg = create_shortcut(target)
+    print(msg)
+    return 0 if ok else 1
+
+
 def main():
-    if "--gen-vbs" in sys.argv[1:]:
+    args = sys.argv[1:]
+    if "--gen-vbs" in args:
         return gen_vbs()
+    if "--create-shortcut" in args:
+        idx = args.index("--create-shortcut")
+        target = args[idx + 1] if idx + 1 < len(args) else "desktop"
+        return create_shortcut_cmd(target)
     return start_and_open()
 
 

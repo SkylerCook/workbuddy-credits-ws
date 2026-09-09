@@ -17,12 +17,14 @@ import os
 import sys
 import http.server
 import socketserver
+from urllib.parse import urlparse, parse_qs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL_DIR = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 import workbuddy_credits as wc  # noqa: E402
+from shortcut import create_shortcut  # noqa: E402
 
 ASSETS_DIR = os.path.join(SKILL_DIR, "assets")
 DASHBOARD_HTML = os.path.join(SKILL_DIR, "dashboard.html")
@@ -84,6 +86,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = build_json()
             body = json.dumps(data, ensure_ascii=False).encode("utf-8")
             self._send(body, "application/json; charset=utf-8")
+        elif path == "/api/create-shortcut":
+            qs = parse_qs(urlparse(self.path).query)
+            target = (qs.get("target") or ["desktop"])[0]
+            ok, msg = create_shortcut(target)
+            body = json.dumps({"ok": ok, "message": msg}, ensure_ascii=False).encode("utf-8")
+            self._send(body, "application/json; charset=utf-8", 200 if ok else 400)
         elif path == "/dashboard_data.js":
             data = build_json()
             body = ("window.CREDITS_DATA = "

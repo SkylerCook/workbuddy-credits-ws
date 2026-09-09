@@ -190,6 +190,11 @@
         <button class="btn" id="export-batch" data-page-node-id="E78tUpIXOuvudm9Z5Nw4kB">导出报表</button>
         <button class="btn" id="export-usage" data-page-node-id="IuE8pyBZQMZsBUog3iuJqj">导出明细</button>
       </div>
+      <span class="tb-divider"></span>
+      <div class="tb-group">
+        <button class="btn" id="shortcut-desktop">桌面快捷方式</button>
+        <button class="btn" id="shortcut-startmenu">开始菜单快捷方式</button>
+      </div>
       <span class="tb-divider" data-page-node-id="EO02MBK4FZQA1QzoPHXYQe"></span>
       <button class="btn primary" id="refresh-btn" data-page-node-id="fF8HaKGe52vo94LTj6a8FP">刷新数据</button>
     </div>
@@ -647,6 +652,23 @@
     });
     exportCSV('积分消耗明细.csv', ['时间', '会话标题', '模型', '消耗积分', '调用次数'], rows);
   });
+
+  // 创建快捷方式（桌面 / 开始菜单）：需经本地服务（serve.py），file:// 下不可用
+  function createShortcut(target) {
+    if (location.protocol === 'file:') {
+      alert('此功能需通过本地服务使用。\n\n请运行：python scripts/serve.py\n然后访问 http://127.0.0.1:8090');
+      return;
+    }
+    fetch('/api/create-shortcut?target=' + encodeURIComponent(target), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res.ok) { alert('已创建快捷方式：\n' + res.message); }
+        else { alert('创建失败：\n' + res.message); }
+      })
+      .catch(function (e) { alert('无法连接服务：' + (e.message || e) + '\n\n请先运行：python scripts/serve.py'); });
+  }
+  document.getElementById('shortcut-desktop').addEventListener('click', function () { createShortcut('desktop'); });
+  document.getElementById('shortcut-startmenu').addEventListener('click', function () { createShortcut('startmenu'); });
 
   // 吸顶偏移动态同步：topbar 换行后高度变化时，nav 的 top 与 scroll-margin-top 跟随
   function syncSticky() {
