@@ -813,13 +813,16 @@
     'sec-batch': '积分批次',
   };
   function updateActiveNav() {
-    const offset = 130; // topbar 60 + nav 60 + 余量
+    // 吸顶偏移必须与 syncSticky 动态设置的 scroll-margin-top 保持一致
+    // （topbar 按钮多会换行，实际吸顶高度可能远超 130，硬编码会导致滚动到位的 section top > offset 而无法激活）
+    const sample = document.getElementById('sec-overview');
+    const offset = (sample && parseFloat(sample.style.scrollMarginTop)) || 130;
     let activeNav = null;
     Object.keys(sectionToNav).forEach(function (id) {
       const el = document.getElementById(id);
       if (!el) return;
       const top = el.getBoundingClientRect().top;
-      if (top - offset <= 0) activeNav = sectionToNav[id];
+      if (top <= offset + 4) activeNav = sectionToNav[id]; // +4px 容错平滑滚动未完全到位/亚像素
     });
     // 滚到页面底部时强制激活最后一个 section，避免其顶部 > offset 无法触发
     if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 8) {
