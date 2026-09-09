@@ -161,6 +161,21 @@
   .page-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
   .page-btn:disabled { opacity: .35; cursor: not-allowed; }
   .page-ellipsis { color: var(--muted); padding: 0 4px; font-size: 13px; }
+  /* ---------- 到期提醒弹框 ---------- */
+  .expiry-mask { position: fixed; inset: 0; z-index: 999; background: rgba(17,24,39,.45); display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .expiry-modal { background: var(--card); border-radius: 14px; box-shadow: 0 20px 50px rgba(0,0,0,.18); max-width: 440px; width: 100%; padding: 22px 24px; animation: expiry-pop .18s ease; }
+  @keyframes expiry-pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .expiry-modal h3 { display: flex; align-items: center; gap: 8px; font-size: 16px; color: var(--title); margin-bottom: 10px; }
+  .expiry-modal h3 .warn-ic { width: 26px; height: 26px; border-radius: 8px; background: #fef3c7; color: var(--amber); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .expiry-modal p { font-size: 13.5px; color: var(--text); line-height: 1.7; margin-bottom: 6px; }
+  .expiry-modal .expiry-rows { margin: 10px 0 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .expiry-modal .expiry-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+  .expiry-modal .expiry-row:last-child { border-bottom: none; }
+  .expiry-modal .expiry-row .lbl { color: var(--text); }
+  .expiry-modal .expiry-row .val { color: var(--title); font-weight: 600; }
+  .expiry-modal .expiry-row .val.red { color: var(--red); }
+  .expiry-modal .expiry-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  .expiry-modal .expiry-actions .btn { font-size: 13px; }
 </style>
 </head>
 <body data-page-node-id="5o6Cghl1HZr0pBEhr9ABQ3">
@@ -409,10 +424,53 @@
   };
   function ic(k) { return '<span class="ic">' + (ICONS[k] || ICONS.info) + '</span>'; }
 
+  // ---------- 到期提醒（首次加载时弹一次，刷新不重复弹） ----------
+  let expiryAlertShown = false;
+  function checkExpiryAlert(D) {
+    if (expiryAlertShown) return;
+    const w = D.waste || {};
+    const cnt = w.at_risk_count || 0;
+    if (cnt <= 0) return;                 // 无 7 天内到期批次，静默
+    expiryAlertShown = true;              // 只弹一次
+    // 从到期列表筛出「可用且 7 天内到期」的批次明细（按到期时间升序，最多列 3 条）
+    const soon = (D.expiry_list || []).filter(function (p) {
+      if (p.status !== '可用' || !p.cycle_end) return false;
+      const t = new Date(String(p.cycle_end).replace(' ', 'T')).getTime();
+      return !isNaN(t) && t > Date.now() && t - Date.now() <= 7 * 86400000;
+    }).sort(function (a, b) {
+      return new Date(String(a.cycle_end).replace(' ', 'T')) - new Date(String(b.cycle_end).replace(' ', 'T'));
+    }).slice(0, 3);
+    const rows = soon.map(function (p) {
+      return '<div class="expiry-row"><span class="lbl">' + (p.label || p.name || '资源包') + '</span>' +
+             '<span class="val red">' + (p.cycle_end || '-') + ' 到期 · ' + p.remain.toFixed(2) + '</span></div>';
+    }).join('');
+    const mask = document.createElement('div');
+    mask.className = 'expiry-mask';
+    mask.innerHTML =
+      '<div class="expiry-modal">' +
+        '<h3><span class="warn-ic">⚠</span>积分即将到期</h3>' +
+        '<p>你有 <b>' + cnt + '</b> 批积分将在 <b>7 天内</b>到期，涉及 <b style="color:var(--red)">' + (w.at_risk || 0).toFixed(2) + '</b> 积分，过期将作废。</p>' +
+        (rows ? '<div class="expiry-rows">' + rows + '</div>' : '') +
+        '<p style="font-size:12px;color:var(--muted)">建议优先使用即将到期的批次，长周期批次留后。</p>' +
+        '<div class="expiry-actions">' +
+          '<button class="btn" id="expiry-close">知道了</button>' +
+          '<button class="btn primary" id="expiry-goto">查看批次</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(mask);
+    mask.querySelector('#expiry-close').addEventListener('click', function () { mask.remove(); });
+    mask.querySelector('#expiry-goto').addEventListener('click', function () {
+      mask.remove();
+      const sec = document.getElementById('sec-batch');
+      if (sec) sec.scrollIntoView({ behavior: 'smooth' });
+    });
+  }
+
   // ---------- 主渲染 ----------
   function renderAll(D) {
     DATA = D;
     computeRange();
+    checkExpiryAlert(D);
 
     // 给面板标题注入图标（幂等，避免重复调用时叠加 span）
     document.querySelectorAll('[data-icon]').forEach(function (h) {

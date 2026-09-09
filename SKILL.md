@@ -75,6 +75,8 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 工作台顶部工具栏提供「桌面快捷方式」「开始菜单快捷方式」两个按钮：点击后由本地服务在对应位置创建 `.lnk` 快捷方式（指向双击启动器 VBS，等效「双击 VBS」），方便用户把工作台入口固定到桌面或开始屏幕。仅可刷新版（`serve.py`，HTTP）可用；静态版（`file://`）不支持。
 
+工作台内置**到期提醒**：首次加载页面时，若有 7 天内到期的积分批次，会自动弹框提示（列出批次与到期时间，可一键跳转「积分批次」查看）。每次打开工作台检查一次，会话内刷新不重复弹。
+
 ### 3. 关键前提
 
 - 已登录 WorkBuddy 客户端，登录态文件存在且 `accessToken` 未过期（JWT 约 90 天有效，失效后需重新登录再查）。
@@ -87,14 +89,13 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 ## 自动化任务部署
 
-本 skill 配套 4 个定时任务（自动化**不随 skill 分发**，安装后需单独部署）。当用户要求「部署积分自动化」「设置到期提醒」「自动签到」时，用 `automation_update` 工具（mode=create）创建以下 4 个任务；完整配置（name / rrule / prompt 模板）见 `references/automation.md`。
+本 skill 配套 1 个定时任务（自动化**不随 skill 分发**，安装后需单独部署）。当用户要求「部署积分自动化」「自动签到」时，用 `automation_update` 工具（mode=create）创建以下任务；完整配置（name / rrule / prompt 模板）见 `references/automation.md`。
 
 | 任务 | 调度 |
 |------|------|
 | 每日自动签到 | 每天 09:00 |
-| 到期巡检 36h | 每 6 小时 |
-| 到期巡检 12h | 每 6 小时 |
-| 每日到期清单汇总 | 每天 09:30 |
+
+> 到期提醒**不**用定时任务推送（体感价值低、有后台开销），改为工作台内置弹框提示：用户主动打开工作台时，若有 7 天内到期批次会自动弹框。主动查看即可掌握到期风险，无需被动巡检。
 
 注意：prompt 中的脚本路径用 `~/.workbuddy/skills/workbuddy-credits/scripts/workbuddy_credits.py`，运行用系统 `python3`/`python`，不写死本机绝对路径。
 
@@ -112,4 +113,4 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 - `dashboard_inline.html` —— 自含数据的单文件工作台（预览/分享用）
 - `assets/echarts.min.js` —— 离线图表库
 - `references/api.md` —— 接口端点、请求头、响应字段与分类逻辑说明
-- `references/automation.md` —— 4 个自动化任务的 name/rrule/prompt 模板
+- `references/automation.md` —— 自动化任务（每日签到）的 name/rrule/prompt 模板
