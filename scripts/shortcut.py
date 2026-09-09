@@ -25,10 +25,15 @@ DEFAULT_VBS = os.path.join(
 )
 DEFAULT_NAME = "WorkBuddy 积分工作台"
 
-# PowerShell 脚本：内容纯 ASCII；DisplayName/VbsPath 经命令行参数（UTF-16）传入，
+# 图标：skill 的 assets/workbuddy-logo.ico（多尺寸青柠图标）。
+# 通过 __file__ 同级目录推导，不写死本机路径，跨机器通用。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ICON = os.path.join(_HERE, "..", "assets", "workbuddy-logo.ico")
+
+# PowerShell 脚本：内容纯 ASCII；DisplayName/VbsPath/IconPath 经命令行参数（UTF-16）传入，
 # 无需写进脚本，避免 PowerShell 5.1 对非 ASCII 源文件的编码坑。
 _PS = r'''
-param([string]$Target, [string]$VbsPath, [string]$DisplayName)
+param([string]$Target, [string]$VbsPath, [string]$DisplayName, [string]$IconPath)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 if ($Target -eq 'desktop') {
@@ -45,6 +50,7 @@ $lnk = $ws.CreateShortcut($lnkPath)
 $lnk.TargetPath = Join-Path $env:WINDIR 'System32\wscript.exe'
 $lnk.Arguments = '"' + $VbsPath + '"'
 $lnk.WorkingDirectory = Split-Path $VbsPath
+if ($IconPath -and (Test-Path $IconPath)) { $lnk.IconLocation = $IconPath + ',0' }
 $lnk.Save()
 Write-Output $lnkPath
 '''
@@ -74,7 +80,7 @@ def create_shortcut(target, vbs_path=None, display_name=DEFAULT_NAME):
         r = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
              "-File", tmp, "-Target", target, "-VbsPath", vbs,
-             "-DisplayName", display_name],
+             "-DisplayName", display_name, "-IconPath", _ICON],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
