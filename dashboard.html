@@ -796,11 +796,20 @@
   window.addEventListener('resize', syncSticky);
 
   // 吸顶导航
+  let navScrollingTo = null;   // 点击导航触发的程序化滚动目标（平滑滚动期间锁定高亮，避免来回跳）
+  let navScrollTimer = null;   // 兜底定时器：异常时强制清除锁定
   document.getElementById('nav-inner').addEventListener('click', function (e) {
     const a = e.target.closest('a'); if (!a) return;
     e.preventDefault();
-    const target = document.querySelector(a.getAttribute('href'));
-    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const href = a.getAttribute('href');
+    const target = document.querySelector(href);
+    if (!target) return;
+    // 平滑滚动会经过中间 section，滚动监听会来回切高亮；此处锁定为点击目标，到位后再恢复
+    navScrollingTo = target.id;
+    navLinks.forEach(function (l) { l.classList.toggle('active', l === a); });
+    clearTimeout(navScrollTimer);
+    navScrollTimer = setTimeout(function () { navScrollingTo = null; }, 1500);
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
   const navLinks = document.querySelectorAll('#nav-inner a');
   const sectionToNav = {
@@ -817,6 +826,16 @@
     // （topbar 按钮多会换行，实际吸顶高度可能远超 130，硬编码会导致滚动到位的 section top > offset 而无法激活）
     const sample = document.getElementById('sec-overview');
     const offset = (sample && parseFloat(sample.style.scrollMarginTop)) || 130;
+    // 程序化滚动期间：锁定在点击目标，目标到位后才恢复按滚动位置计算
+    if (navScrollingTo) {
+      const tgt = document.getElementById(navScrollingTo);
+      if (tgt && tgt.getBoundingClientRect().top <= offset + 4) {
+        navScrollingTo = null;
+        clearTimeout(navScrollTimer);
+      } else {
+        return; // 滚动未到位，保持当前高亮不跳
+      }
+    }
     let activeNav = null;
     Object.keys(sectionToNav).forEach(function (id) {
       const el = document.getElementById(id);
