@@ -211,6 +211,7 @@
         <button class="btn" id="shortcut-startmenu">开始菜单快捷方式</button>
       </div>
       <span class="tb-divider" data-page-node-id="EO02MBK4FZQA1QzoPHXYQe"></span>
+      <button class="btn" id="alert-settings">提醒设置</button>
       <button class="btn primary" id="refresh-btn" data-page-node-id="fF8HaKGe52vo94LTj6a8FP">刷新数据</button>
     </div>
   </div>
@@ -424,23 +425,40 @@
   };
   function ic(k) { return '<span class="ic">' + (ICONS[k] || ICONS.info) + '</span>'; }
 
-  // ---------- 到期提醒（首次加载时弹一次，刷新不重复弹） ----------
+  // ---------- 到期提醒（首次加载时弹一次，刷新不重复弹；阈值可自定义） ----------
   let expiryAlertShown = false;
+
+  // localStorage 安全封装（file:// 下可能不可用，降级为默认值）
+  function lsGet(k, def) { try { const v = localStorage.getItem(k); return v == null ? def : v; } catch (e) { return def; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  // 提醒阈值（小时）：默认 24h；0 = 关闭提醒
+  function getAlertHours() {
+    const v = parseInt(lsGet('credits_expiry_alert_hours', '24'), 10);
+    return isNaN(v) ? 24 : v;
+  }
+  function fmtWindow(h) {
+    return (h % 24 === 0) ? (h / 24) + ' 天' : h + ' 小时';
+  }
+
   function checkExpiryAlert(D) {
     if (expiryAlertShown) return;
-    const w = D.waste || {};
-    const cnt = w.at_risk_count || 0;
-    if (cnt <= 0) return;                 // 无 7 天内到期批次，静默
-    expiryAlertShown = true;              // 只弹一次
-    // 从到期列表筛出「可用且 7 天内到期」的批次明细（按到期时间升序，最多列 3 条）
+    const hours = getAlertHours();
+    if (hours <= 0) return;               // 用户已关闭提醒
+    const winMs = hours * 3600000;
+    const now = Date.now();
+    // 从到期列表筛出「可用且窗口内到期」的批次（按到期时间升序）
     const soon = (D.expiry_list || []).filter(function (p) {
       if (p.status !== '可用' || !p.cycle_end) return false;
       const t = new Date(String(p.cycle_end).replace(' ', 'T')).getTime();
-      return !isNaN(t) && t > Date.now() && t - Date.now() <= 7 * 86400000;
+      return !isNaN(t) && t > now && t - now <= winMs;
     }).sort(function (a, b) {
       return new Date(String(a.cycle_end).replace(' ', 'T')) - new Date(String(b.cycle_end).replace(' ', 'T'));
-    }).slice(0, 3);
-    const rows = soon.map(function (p) {
+    });
+    if (soon.length === 0) return;        // 窗口内无到期批次，静默
+    expiryAlertShown = true;              // 只弹一次
+    const total = soon.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
+    const rows = soon.slice(0, 3).map(function (p) {
       return '<div class="expiry-row"><span class="lbl">' + (p.label || p.name || '资源包') + '</span>' +
              '<span class="val red">' + (p.cycle_end || '-') + ' 到期 · ' + p.remain.toFixed(2) + '</span></div>';
     }).join('');
@@ -449,20 +467,53 @@
     mask.innerHTML =
       '<div class="expiry-modal">' +
         '<h3><span class="warn-ic">⚠</span>积分即将到期</h3>' +
-        '<p>你有 <b>' + cnt + '</b> 批积分将在 <b>7 天内</b>到期，涉及 <b style="color:var(--red)">' + (w.at_risk || 0).toFixed(2) + '</b> 积分，过期将作废。</p>' +
+        '<p>你有 <b>' + soon.length + '</b> 批积分将在 <b>' + fmtWindow(hours) + '</b>内到期，涉及 <b style="color:var(--red)">' + total.toFixed(2) + '</b> 积分，过期将作废。</p>' +
         (rows ? '<div class="expiry-rows">' + rows + '</div>' : '') +
         '<p style="font-size:12px;color:var(--muted)">建议优先使用即将到期的批次，长周期批次留后。</p>' +
         '<div class="expiry-actions">' +
           '<button class="btn" id="expiry-close">知道了</button>' +
+          '<button class="btn" id="expiry-settings">提醒设置</button>' +
           '<button class="btn primary" id="expiry-goto">查看批次</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(mask);
     mask.querySelector('#expiry-close').addEventListener('click', function () { mask.remove(); });
+    mask.querySelector('#expiry-settings').addEventListener('click', function () { mask.remove(); openAlertSettings(); });
     mask.querySelector('#expiry-goto').addEventListener('click', function () {
       mask.remove();
       const sec = document.getElementById('sec-batch');
       if (sec) sec.scrollIntoView({ behavior: 'smooth' });
+    });
+  }
+
+  // 提醒设置弹框
+  function openAlertSettings() {
+    const cur = getAlertHours();
+    const opts = [['12', '12 小时'], ['24', '24 小时（默认）'], ['48', '48 小时（2 天）'], ['72', '3 天'], ['168', '7 天'], ['0', '关闭提醒']];
+    const sel = opts.map(function (o) {
+      return '<option value="' + o[0] + '"' + (String(cur) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+    }).join('');
+    const mask = document.createElement('div');
+    mask.className = 'expiry-mask';
+    mask.innerHTML =
+      '<div class="expiry-modal">' +
+        '<h3><span class="warn-ic">⚙</span>到期提醒设置</h3>' +
+        '<p>当有积分批次在所选窗口内到期时，打开工作台会弹框提醒。</p>' +
+        '<div style="margin:12px 0 16px;">' +
+          '<label style="font-size:12.5px;color:var(--text);display:block;margin-bottom:6px;">提醒窗口</label>' +
+          '<select class="select-input" id="alert-hours" style="width:100%;">' + sel + '</select>' +
+        '</div>' +
+        '<div class="expiry-actions">' +
+          '<button class="btn" id="settings-cancel">取消</button>' +
+          '<button class="btn primary" id="settings-save">保存</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(mask);
+    mask.querySelector('#settings-cancel').addEventListener('click', function () { mask.remove(); });
+    mask.querySelector('#settings-save').addEventListener('click', function () {
+      const v = parseInt(mask.querySelector('#alert-hours').value, 10);
+      lsSet('credits_expiry_alert_hours', String(isNaN(v) ? 24 : v));
+      mask.remove();
     });
   }
 
@@ -727,6 +778,7 @@
   }
   document.getElementById('shortcut-desktop').addEventListener('click', function () { createShortcut('desktop'); });
   document.getElementById('shortcut-startmenu').addEventListener('click', function () { createShortcut('startmenu'); });
+  document.getElementById('alert-settings').addEventListener('click', openAlertSettings);
 
   // 吸顶偏移动态同步：topbar 换行后高度变化时，nav 的 top 与 scroll-margin-top 跟随
   function syncSticky() {
