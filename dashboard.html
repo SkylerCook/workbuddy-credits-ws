@@ -198,6 +198,7 @@
   @keyframes expiry-pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   .expiry-modal h3 { display: flex; align-items: center; gap: 8px; font-size: 16px; color: var(--title); margin-bottom: 10px; }
   .expiry-modal h3 .warn-ic { width: 26px; height: 26px; border-radius: 8px; background: #fef3c7; color: var(--amber); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .expiry-modal h3 .checkin-ic { width: 26px; height: 26px; border-radius: 8px; background: #ecfdf5; color: var(--green); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px; font-weight: 700; }
   .expiry-modal p { font-size: 13.5px; color: var(--text); line-height: 1.7; margin-bottom: 6px; }
   .expiry-modal .expiry-rows { margin: 10px 0 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
   .expiry-modal .expiry-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
@@ -457,8 +458,9 @@
   };
   function ic(k) { return '<span class="ic">' + (ICONS[k] || ICONS.info) + '</span>'; }
 
-  // ---------- 到期提醒（首次加载时弹一次，刷新不重复弹；阈值可自定义） ----------
+  // ---------- 首次加载弹框（会话内只弹一次，刷新不重复） ----------
   let expiryAlertShown = false;
+  let checkinPromptShown = false;
 
   // localStorage 安全封装（file:// 下可能不可用，降级为默认值）
   function lsGet(k, def) { try { const v = localStorage.getItem(k); return v == null ? def : v; } catch (e) { return def; } }
@@ -518,6 +520,48 @@
     });
   }
 
+  // 未签到提示：当天未签到 → 首次加载弹框，引导点击「立即签到」
+  function needCheckinPrompt(D) {
+    if (checkinPromptShown) return false;
+    if (location.protocol === 'file:') return false;   // 静态版无法签到，不误导
+    return !(D && D.checkin && D.checkin.today_checked_in);
+  }
+
+  function showCheckinPrompt(D, onClose) {
+    checkinPromptShown = true;
+    const ck = (D && D.checkin) || {};
+    const streak = ck.streak_days || 0;
+    const credit = ck.daily_credit || 0;
+    const mask = document.createElement('div');
+    mask.className = 'expiry-mask';
+    mask.innerHTML =
+      '<div class="expiry-modal">' +
+        '<h3><span class="checkin-ic">✓</span>今日还未签到</h3>' +
+        '<p>连续签到可得每日积分奖励' +
+          (credit ? '（每日 <b style="color:var(--green)">+' + credit + '</b> 积分）' : '') +
+          '，断签会中断连续天数' + (streak ? '（当前已连续 <b>' + streak + '</b> 天）' : '') + '。</p>' +
+        '<p style="font-size:12px;color:var(--muted)">点击顶部「立即签到」按钮即可完成，无需打开 WorkBuddy。</p>' +
+        '<div class="expiry-actions" style="margin-top:14px">' +
+          '<button class="btn" id="checkin-later">稍后</button>' +
+          '<button class="btn checkin" id="checkin-go">立即签到</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(mask);
+    function close() { mask.remove(); if (onClose) onClose(); }
+    mask.querySelector('#checkin-later').addEventListener('click', close);
+    mask.querySelector('#checkin-go').addEventListener('click', function () {
+      close();                                          // 复用顶部按钮的签到逻辑（含签到后刷新）
+      const btn = document.getElementById('checkin-btn');
+      if (btn && !btn.disabled) btn.click();
+    });
+  }
+
+  // 首次加载编排：未签到优先提示（动作项），关闭后再看到期提醒，避免两个弹框叠在一起
+  function firstLoadPrompts(D) {
+    if (needCheckinPrompt(D)) { showCheckinPrompt(D, function () { checkExpiryAlert(D); }); }
+    else { checkExpiryAlert(D); }
+  }
+
   // 提醒设置弹框
   function openAlertSettings() {
     const cur = getAlertHours();
@@ -553,8 +597,8 @@
   function renderAll(D) {
     DATA = D;
     computeRange();
-    checkExpiryAlert(D);
     syncCheckinBtn(D);
+    firstLoadPrompts(D);
 
     // 给面板标题注入图标（幂等，避免重复调用时叠加 span）
     document.querySelectorAll('[data-icon]').forEach(function (h) {
