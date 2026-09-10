@@ -1,0 +1,20 @@
+# ---- 行尾统一：仓库与工作区一律 LF ----
+# 背景：Windows 上 git 默认 core.autocrlf=true，会让「git 检出的文件」变 CRLF，
+# 而 Release 包（CI 在 Linux 打包）与用户安装目录是 LF，三处不一致。
+# 本文件是行尾的唯一权威来源，优先级高于 core.autocrlf。
+* text=auto eol=lf
+
+# Windows 脚本必须保留 CRLF（cmd.exe / Windows PowerShell 5.1 最稳）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：不做行尾转换，也不参与文本 diff / merge
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.exe  binary
+*.dll  binary

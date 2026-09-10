@@ -261,6 +261,8 @@ workbuddy-credits-ws/
 ├── README.md                     # 本文件
 ├── manifest.yaml                 # 版本号与市场清单（Release tag 以此为版本权威）
 ├── dashboard.html                # 工作台页面（可刷新版模板）
+├── .gitignore                    # 忽略 dist/、用户数据、缓存
+├── .gitattributes                # 行尾统一为 LF（覆盖 Windows 的 core.autocrlf）
 ├── scripts/
 │   ├── workbuddy_credits.py      # 核心脚本（查询/签到/快照/分析/渲染/账本）
 │   ├── serve.py                  # 本地可刷新工作台服务
@@ -355,11 +357,26 @@ python scripts/build_dist.py                  # 输出 dist/ 三件套
 python scripts/build_dist.py --print-version  # 只打印 manifest.yaml 里的版本号（CI 用它校验 tag）
 ```
 
+- **自动清理旧包**：打包后自动删除 `dist/` 内其它版本的 `workbuddy-credits-v*.zip`，只留当前版本 + 稳定包 + 校验文件，避免目录堆旧包。
+- **文本一律 LF**：文本文件写入 zip 前统一转 LF（与 `.gitattributes` 的 `eol=lf` 一致），二进制资源（png/ico 等）原样保留 → 产物不依赖本地检出状态，Windows 的 `core.autocrlf=true` 也影响不到。
+
 > 打包可复现：zip 条目按名称排序、时间戳统一取当次 git 提交时间。同一次提交、相同 Python/zlib 版本下重复打包得到相同字节；跨环境不保证字节一致（**sha256 以随包发布的 `SHA256SUMS.txt` 为准**）。
 
 ### 下载域名说明
 
 `update.py` 下载 Release 资产时**优先走 API 资产端点**（`api.github.com` → 302 → `release-assets.githubusercontent.com`），失败才退回 `browser_download_url`（`github.com`）。实测国内网络下 `github.com` 会间歇性不可达，而 API 域名与 CDN 稳定，故 API 端点优先。同理，`releases/latest/download/...` 永久直链依赖 `github.com`，偶发不通时改用 `update.py` 或 Release 页面手动下载。
+
+### 行尾约定（`.gitattributes`）
+
+本仓库所有文本文件统一 **LF**（`.gitattributes` 里 `* text=auto eol=lf`）。原因：Windows 上 git 默认 `core.autocrlf=true`，会让「git 检出的文件」变 CRLF，而 CI 在 Linux 打的包与用户安装目录是 LF，导致 `git clone` 安装与 Release 安装**行尾不一致**（内容相同，但直接 md5 比对会误报差异）。
+
+要点：
+
+- `.gitattributes` 优先级**高于** `core.autocrlf`，无需让贡献者改本地 git 配置。
+- `*.png / *.ico / *.jpg / *.zip` 等声明为 `binary`，不做任何转换。
+- `*.bat / *.cmd / *.ps1` 例外保留 **CRLF**（cmd.exe 与 Windows PowerShell 5.1 最稳）。
+- 若在加入 `.gitattributes` **之前**就已克隆，执行一次 `git add --renormalize .` 并重新检出（删除后用 `git checkout -- .` 恢复）即可拉平；或用 `git clone` 重新克隆。
+- `build_dist.py` 打包时还会再把文本统一转 LF 作为兜底，所以**即使本地检出是 CRLF，产物也是 LF**。
 
 ---
 

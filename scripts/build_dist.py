@@ -14,10 +14,13 @@
 
 设计要点：
     - **白名单式收集**：只打包 SKILL.md / manifest.yaml / README.md / dashboard.html /
-      .gitignore / assets/ / references/ / scripts/*.py（排除本脚本自身）
+      .gitignore / .gitattributes / assets/ / references/ / scripts/*.py（排除本脚本自身）
       → 用户数据（dashboard_data.js、dashboard_inline.html）、.git、dist、__pycache__
         以及用户自建的其它文件永远不会进包
     - zip 内顶层目录固定为 workbuddy-credits/，解压即得到可用的 skill 目录
+    - 文本文件统一以 **LF** 写入 zip（与 .gitattributes 的 eol=lf 一致）
+      → 打包结果不依赖本地检出状态，Windows 的 core.autocrlf 也影响不到产物
+    - 打包前**自动清理 dist/ 内其它版本的 zip**，避免目录里堆旧包
     - 条目按名称排序、时间戳统一取当次 git 提交时间
       → 同一次提交、相同 Python/zlib 版本下可复现出相同字节
         （zlib 版本不同时压缩流可能不同，故跨环境不保证字节一致；
@@ -46,6 +49,7 @@ INCLUDE_FILES = (
     "README.md",
     "dashboard.html",
     ".gitignore",
+    ".gitattributes",
 )
 # 顶层目录（递归收集）
 INCLUDE_DIRS = ("assets", "references", "scripts")
@@ -53,6 +57,14 @@ INCLUDE_DIRS = ("assets", "references", "scripts")
 EXCLUDE_NAMES = {"build_dist.py", ".DS_Store", "Thumbs.db"}
 EXCLUDE_DIRS = {"__pycache__"}
 EXCLUDE_SUFFIX = (".pyc", ".pyo", ".log")
+
+# 视为文本的后缀（打包时统一转 LF）；不在表内的一律按二进制原样写入
+TEXT_SUFFIX = {
+    ".md", ".yaml", ".yml", ".html", ".htm", ".css", ".js", ".mjs", ".cjs",
+    ".py", ".txt", ".json", ".xml", ".svg", ".ini", ".cfg", ".toml", ".tsv", ".csv",
+    ".gitignore", ".gitattributes", ".editorconfig",
+}
+VERSIONED_RE = re.compile(r"^workbuddy-credits-v.+\.zip$")
 
 ZIP_EPOCH_MIN = 315532800  # 1980-01-01，zip 格式时间戳下限
 
@@ -116,6 +128,36 @@ def commit_time():
 
 # ------------------------------------------------------------------ 打包
 
+def is_text_file(p: Path) -> bool:
+    """按后缀/文件名判定是否文本（宁缺勿滥，未命中即当二进制原样处理）。"""
+    return p.suffix.lower() in TEXT_SUFFIX or p.name.lower() in TEXT_SUFFIX
+
+
+def read_for_zip(p: Path) -> bytes:
+    """读取待打包字节。文本统一为 LF，使产物不受本地检出状态影响
+    （Windows 默认 core.autocrlf=true 会把检出文件变成 CRLF）。"""
+    data = p.read_bytes()
+    if b"\r\n" in data and is_text_file(p):
+        data = data.replace(b"\r\n", b"\n")
+    return data
+
+
+def clean_stale(out: Path, keep: Path, quiet=False):
+    """删除 out 目录内其它版本的 workbuddy-credits-v*.zip（稳定包与校验文件保留）。"""
+    removed = []
+    for f in sorted(out.glob("workbuddy-credits-v*.zip")):
+        if f.name == keep.name or not VERSIONED_RE.match(f.name):
+            continue
+        try:
+            f.unlink()
+            removed.append(f.name)
+        except OSError as e:
+            print("  ! 清理失败 %s：%s" % (f.name, e))
+    if removed and not quiet:
+        print("已清理 %d 个旧版本包：%s" % (len(removed), "、".join(removed)))
+    return removed
+
+
 def write_zip(zip_path, files, ts):
     date_time = time.gmtime(ts)[:6]
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -124,7 +166,7 @@ def write_zip(zip_path, files, ts):
             info = zipfile.ZipInfo(arc, date_time=date_time)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = (0o644 & 0xFFFF) << 16  # 普通文件权限
-            z.writestr(info, p.read_bytes())
+            z.writestr(info, read_for_zip(p))
 
 
 def sha256_file(path):
@@ -165,6 +207,7 @@ def main():
 
     write_zip(versioned, files, ts)
     stable.write_bytes(versioned.read_bytes())
+    removed = clean_stale(out, versioned, quiet=True)
 
     digest = sha256_file(versioned)
     (out / "SHA256SUMS.txt").write_text(
@@ -181,6 +224,8 @@ def main():
     print("产物：")
     for f in (versioned, stable, out / "SHA256SUMS.txt"):
         print("  · %-40s %8.1f KB" % (f.name, f.stat().st_size / 1024.0))
+    if removed:
+        print("旧包：已清理 %d 个（%s）" % (len(removed), "、".join(removed)))
     print("sha256：%s" % digest)
     print("       原始 %.1f MB → 压缩 %.1f KB" % (raw / 1048576.0, packed / 1024.0))
     return 0
