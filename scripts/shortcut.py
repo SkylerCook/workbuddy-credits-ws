@@ -27,15 +27,24 @@ DEFAULT_NAME = "WorkBuddy 积分工作台"
 
 # 图标：skill 的 assets/workbuddy-logo.ico（多尺寸青柠图标）。
 # 通过 __file__ 同级目录推导，不写死本机路径，跨机器通用。
+# 用 abspath 规范化 `..`，输出绝对路径——`.lnk` 的 IconLocation 在解析相对路径时会
+# 以快捷方式所在目录（桌面 / 开始菜单）为基准，导致跨目录找不到图标。
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_ICON = os.path.join(_HERE, "..", "assets", "workbuddy-logo.ico")
+_ICON = os.path.abspath(os.path.join(_HERE, "..", "assets", "workbuddy-logo.ico"))
 
-# PowerShell 脚本：内容纯 ASCII；DisplayName/VbsPath/IconPath 经命令行参数（UTF-16）传入，
-# 无需写进脚本，避免 PowerShell 5.1 对非 ASCII 源文件的编码坑。
+# PowerShell 脚本：内容纯 ASCII。
+# 参数通过环境变量（WB_SC_*）传入——避免 PowerShell `-File` 模式把含空格路径
+# 在命令行按空格截断的问题（用户路径如 `E:\AI Era\...` 之前就因此吃掉了图标）。
 _PS = r'''
-param([string]$Target, [string]$VbsPath, [string]$DisplayName, [string]$IconPath)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$Target      = $env:WB_SC_TARGET
+$VbsPath     = $env:WB_SC_VBS
+$DisplayName = $env:WB_SC_NAME
+$IconPath    = $env:WB_SC_ICON
+if (-not $Target)      { throw 'WB_SC_TARGET not set' }
+if (-not $VbsPath)     { throw 'WB_SC_VBS not set' }
+if (-not $DisplayName) { throw 'WB_SC_NAME not set' }
 if ($Target -eq 'desktop') {
     $dir = [Environment]::GetFolderPath('Desktop')
 } elseif ($Target -eq 'startmenu') {
@@ -50,7 +59,10 @@ $lnk = $ws.CreateShortcut($lnkPath)
 $lnk.TargetPath = Join-Path $env:WINDIR 'System32\wscript.exe'
 $lnk.Arguments = '"' + $VbsPath + '"'
 $lnk.WorkingDirectory = Split-Path $VbsPath
-if ($IconPath -and (Test-Path $IconPath)) { $lnk.IconLocation = $IconPath + ',0' }
+# 图标：仅当文件存在且扩展名为 .ico 才设置（Windows 限制快捷方式图标必须是 .ico）。
+if ($IconPath -and (Test-Path $IconPath) -and ([IO.Path]::GetExtension($IconPath) -ieq '.ico')) {
+    $lnk.IconLocation = $IconPath + ',0'
+}
 $lnk.Save()
 Write-Output $lnkPath
 '''
@@ -77,12 +89,17 @@ def create_shortcut(target, vbs_path=None, display_name=DEFAULT_NAME):
     try:
         with os.fdopen(fd, "w", encoding="utf-8-sig") as f:
             f.write(_PS)
+        # 通过环境变量把含空格路径传给 PowerShell，避开命令行参数解析。
+        env = os.environ.copy()
+        env["WB_SC_TARGET"] = target
+        env["WB_SC_VBS"] = vbs
+        env["WB_SC_NAME"] = display_name
+        env["WB_SC_ICON"] = _ICON if _ICON else ""
         r = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-File", tmp, "-Target", target, "-VbsPath", vbs,
-             "-DisplayName", display_name, "-IconPath", _ICON],
+             "-File", tmp],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=30,
+            timeout=30, env=env,
         )
         out = (r.stdout or "").strip()
         err = (r.stderr or "").strip()

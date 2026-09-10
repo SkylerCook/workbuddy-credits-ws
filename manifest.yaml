@@ -3,7 +3,7 @@ slug: workbuddy-credits
 version: 1.0.0
 category: 效率工具
 author: Skyler Cook
-description: 查询 WorkBuddy/CodeBuddy 积分余额与批次明细，支持自动签到、余额快照、过期浪费分析、可视化工作台，以及双击启动器与桌面/开始菜单快捷方式。
+description: 查询 WorkBuddy/CodeBuddy 积分余额与批次明细，支持每日签到（命令行或工作台按钮，无需打开 WorkBuddy）、余额快照、过期浪费分析、可视化工作台，以及双击启动器与桌面/开始菜单快捷方式。
 tags:
   - 积分
   - WorkBuddy

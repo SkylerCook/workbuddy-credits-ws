@@ -54,6 +54,36 @@
   .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
   .btn.primary:hover { opacity: .9; color: #fff; }
   .btn:disabled { opacity: .5; cursor: default; }
+
+  /* 立即签到：高亮强调（青柠渐变 + 呼吸光晕 + 圆点指示），吸引注意 */
+  .btn.checkin {
+    background: linear-gradient(135deg, #84CC16, #10B981);
+    border: 1px solid transparent; color: #fff; font-weight: 600;
+    box-shadow: 0 2px 10px rgba(16,185,129,.35);
+    animation: checkin-pulse 2.4s ease-in-out infinite;
+  }
+  .btn.checkin::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%; background: #fff;
+    display: inline-block; margin-right: 6px; vertical-align: middle;
+    box-shadow: 0 0 0 3px rgba(255,255,255,.35);
+  }
+  .btn.checkin:hover {
+    color: #fff; opacity: .94; border-color: transparent;
+    box-shadow: 0 3px 16px rgba(16,185,129,.55);
+  }
+  @keyframes checkin-pulse {
+    0%, 100% { box-shadow: 0 2px 10px rgba(16,185,129,.35); }
+    50% { box-shadow: 0 2px 18px rgba(16,185,129,.7); }
+  }
+  /* 已签到：中性完成态，置灰不可点 */
+  .btn.checkin.done,
+  .btn.checkin.done:disabled {
+    background: #F3F4F6; border: 1px solid var(--border);
+    color: var(--muted); font-weight: 500; box-shadow: none;
+    animation: none; opacity: 1; cursor: default;
+  }
+  .btn.checkin.done:hover { color: var(--muted); border-color: var(--border); opacity: 1; }
+  .btn.checkin.done::before { background: var(--green); box-shadow: none; }
   .date-input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; font-size: 12.5px; color: var(--text); }
   .user-chip { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--border); margin-left: auto; }
   .user-avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg,#388DF6,#7c3aed); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
@@ -212,6 +242,7 @@
         <button class="btn" id="shortcut-startmenu">开始菜单快捷方式</button>
       </div>
       <span class="tb-divider" data-page-node-id="EO02MBK4FZQA1QzoPHXYQe"></span>
+      <button class="btn checkin" id="checkin-btn" title="无需打开 WorkBuddy，直接完成每日签到">立即签到</button>
       <button class="btn" id="alert-settings">提醒设置</button>
       <button class="btn primary" id="refresh-btn" data-page-node-id="fF8HaKGe52vo94LTj6a8FP">刷新数据</button>
     </div>
@@ -523,6 +554,7 @@
     DATA = D;
     computeRange();
     checkExpiryAlert(D);
+    syncCheckinBtn(D);
 
     // 给面板标题注入图标（幂等，避免重复调用时叠加 span）
     document.querySelectorAll('[data-icon]').forEach(function (h) {
@@ -549,6 +581,19 @@
 
     // 指标卡
     const w = D.waste || {};
+    // 登录态有效期（accessToken）：提示何时需要打开一次 WorkBuddy 续期
+    const au = D.auth_status || null;
+    let authCard = { cls: '', icon: 'clock', label: '登录态有效期', value: '—', sub: '登录态信息读取失败' };
+    if (au) {
+      const expDate = new Date(au.expires_at).toLocaleDateString('zh-CN');
+      if (au.expired) {
+        authCard = { cls: 'red', icon: 'alert', label: '登录态有效期', value: '已过期', sub: '打开一次 WorkBuddy 即可恢复' };
+      } else if (au.days_left <= 7) {
+        authCard = { cls: 'amber', icon: 'clock', label: '登录态有效期', value: au.days_left + ' 天', sub: '有效至 ' + expDate + ' · 打开一次 WorkBuddy 可续期' };
+      } else {
+        authCard = { cls: '', icon: 'clock', label: '登录态有效期', value: au.days_left + ' 天', sub: '有效至 ' + expDate };
+      }
+    }
     const cards = [
       { cls: '', icon: 'wallet', label: '可用积分', value: (D.total_remain || 0).toFixed(2), sub: '可用包 ' + (D.avail_count || 0) + ' 个' },
       { cls: '', icon: 'bolt', label: '今日已使用', value: D.today_used != null ? D.today_used.toFixed(2) : '—', sub: '刷新即实时统计' },
@@ -557,6 +602,7 @@
       { cls: 'amber', icon: 'alert', label: '即将到期（7天内）', value: w.at_risk_count || 0, sub: '涉及 ' + (w.at_risk || 0).toFixed(2) + ' 积分' },
       { cls: 'red', icon: 'loss', label: '已过期损失', value: (w.wasted || 0).toFixed(2), sub: '已过期未用完 ' + (w.wasted_count || 0) + ' 批' },
       { cls: 'green', icon: 'cal', label: '今日签到', value: (D.checkin && D.checkin.today_checked_in) ? '已签到' : '未签到', sub: '连续 ' + (D.checkin ? D.checkin.streak_days : 0) + ' 天 · 每日 +' + (D.checkin ? D.checkin.daily_credit : 0) },
+      authCard,
       // 用户信息（来自 account：nickname / type）
       { cls: '', icon: 'user', label: '当前账号', value: (D.nickname || '-'), sub: (D.account_type === 'personal' ? '个人版' : (D.account_type || '—')) },
     ];
@@ -723,13 +769,23 @@
     return fetch('/api/data', { cache: 'no-store' }).then(function (r) { return r.json(); });
   }
 
-  document.getElementById('refresh-btn').addEventListener('click', function () {
-    const btn = this;
-    btn.disabled = true; btn.textContent = '刷新中…';
-    loadData()
-      .then(function (data) { if (data && data.error) { alert('刷新失败：' + data.error); return; } renderAll(data); })
+  // 统一的数据刷新：重新拉取并渲染。viaBtn=true 时在「刷新数据」按钮上给出可见反馈
+  function refreshData(viaBtn) {
+    const rbtn = document.getElementById('refresh-btn');
+    const old = rbtn.textContent;
+    if (viaBtn) { rbtn.disabled = true; rbtn.textContent = '刷新中…'; }
+    return loadData()
+      .then(function (data) {
+        if (!data || data.error) { alert('刷新失败：' + ((data && data.error) || '未知错误')); return data; }
+        renderAll(data);
+        return data;
+      })
       .catch(function (e) { alert('无法加载数据：' + (e.message || e) + '\n\n如通过 HTTP 访问，请先运行：python scripts/serve.py\n如通过 file:// 访问，请先运行：python scripts/workbuddy_credits.py render 生成 dashboard_data.js'); })
-      .finally(function () { btn.disabled = false; btn.textContent = '刷新数据'; });
+      .finally(function () { if (viaBtn) { rbtn.disabled = false; rbtn.textContent = old; } });
+  }
+
+  document.getElementById('refresh-btn').addEventListener('click', function () {
+    refreshData(true);
   });
 
   document.getElementById('range-seg').addEventListener('click', function (e) {
@@ -780,6 +836,45 @@
   document.getElementById('shortcut-desktop').addEventListener('click', function () { createShortcut('desktop'); });
   document.getElementById('shortcut-startmenu').addEventListener('click', function () { createShortcut('startmenu'); });
   document.getElementById('alert-settings').addEventListener('click', openAlertSettings);
+
+  // 签到按钮状态：已签到→置灰禁用（无需重复）；未签到→高亮可点
+  function syncCheckinBtn(D) {
+    const btn = document.getElementById('checkin-btn');
+    if (!btn) return;
+    const done = !!(D && D.checkin && D.checkin.today_checked_in);
+    if (done) {
+      btn.disabled = true;
+      btn.classList.add('done');
+      btn.textContent = '今日已签到';
+      btn.title = '今日已签到，无需重复';
+    } else {
+      btn.disabled = false;
+      btn.classList.remove('done');
+      btn.textContent = '立即签到';
+      btn.title = '无需打开 WorkBuddy，直接完成每日签到';
+    }
+  }
+
+  // 立即签到：无需打开 WorkBuddy，经本地服务直调签到接口（幂等，已签则跳过）
+  document.getElementById('checkin-btn').addEventListener('click', function () {
+    const btn = this;
+    if (btn.disabled) return;
+    if (location.protocol === 'file:') {
+      alert('此功能需通过本地服务使用。\n\n请运行：python scripts/serve.py\n然后访问 http://127.0.0.1:8090');
+      return;
+    }
+    btn.disabled = true; btn.textContent = '签到中…';
+    fetch('/api/checkin', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok) { alert('签到失败：\n' + (res.error || '未知错误')); return; }
+        alert(res.message || '签到成功');
+        // 签到成功后立即重新拉取数据并刷新界面（按钮显示「刷新中…」作为可见反馈）
+        return refreshData(true);
+      })
+      .catch(function (e) { alert('无法连接服务：' + (e.message || e) + '\n\n请先运行：python scripts/serve.py'); })
+      .finally(function () { syncCheckinBtn(DATA); });
+  });
 
   // 吸顶偏移动态同步：topbar 换行后高度变化时，nav 的 top 与 scroll-margin-top 跟随
   function syncSticky() {
