@@ -7,6 +7,9 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
+# ---- 打包产物（由 scripts/build_dist.py / GitHub Actions 生成，经 Releases 分发）----
+dist/
+
 # ---- 系统/编辑器 ----
 .DS_Store
 Thumbs.db

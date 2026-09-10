@@ -38,12 +38,16 @@ python scripts/update.py --check   # 只检查是否有更新，不改动任何�
 
 脚本行为：
 
-1. **自动检测安装方式**：skill 目录含 `.git` 且有 git → `git pull --ff-only`（增量、可回滚）；否则下载 `main.zip` 解压覆盖（合并式，**不删除**本地已有文件）。
-2. 对比 `manifest.yaml` 的 `version`，报告版本变化与变更文件。
-3. **若工作台服务正在运行 → 停掉旧进程并重启**。服务是 DETACHED 常驻进程，不重启不会加载新代码（这是必须的一步）。
-4. 重启前会校验监听进程确为 python，避免误杀其它占用 8090 的程序。
+1. **优先走 GitHub Releases 包**（本仓库以 Release 作为版本权威）：查 `/releases/latest` → 比对 tag 与本地 `manifest.yaml` 的 `version` → 下载 `workbuddy-credits-v<ver>.zip` → 用同 Release 的 `SHA256SUMS.txt` **校验 sha256**（校验失败拒绝安装）→ 合并式覆盖。
+2. **自动检测安装方式**：skill 目录含 `.git` 且有 git → `git pull --ff-only`（增量、可回滚）；否则走上面的 Release 包；Release 不可用时退回源码包覆盖（`git clone --depth 1` → `main.zip`）。
+   - 均为**合并式覆盖**，不删除本地已有文件。可用 `--source release|git|archive` 强制指定来源。
+3. 对比版本号，报告版本变化、变更文件与 Release 发行说明。
+4. **若工作台服务正在运行 → 停掉旧进程并重启**。服务是 DETACHED 常驻进程，不重启不会加载新代码（这是必须的一步）。
+5. 重启前会校验监听进程确为 python，避免误杀其它占用 8090 的程序。
 
-网络不通时加 `--proxy <地址>`（默认直连 GitHub）。用户数据在 `~/.workbuddy/workbuddy-credits-data/`（skill 目录**外**），更新不影响。
+网络不通时加 `--proxy <地址>`（默认直连 GitHub）；GitHub API 限流时加 `--token <token>`（或设 `GITHUB_TOKEN`）。用户数据在 `~/.workbuddy/workbuddy-credits-data/`（skill 目录**外**），更新不影响。
+
+`--force` 可在版本号相同时强制重装。发布流程（维护者）见 `README.md`「八、版本与发布」。
 
 > 更新入口同时写在 `README.md`：SKILL.md 里新增的触发词要等**更新之后**才生效（自举问题），README 是用户可复制、Agent 可读的可靠锚点。
 
@@ -142,7 +146,8 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 - `scripts/serve.py` —— 本地可刷新工作台服务
 - `scripts/launcher.py` —— 通用启动器（独立进程常驻 + 生成双击启动器 VBS）
 - `scripts/shortcut.py` —— 创建 .lnk 快捷方式到桌面/开始菜单（零依赖，subprocess 调 PowerShell）
-- `scripts/update.py` —— 更新器（检测安装方式 → git pull / zip 覆盖 → 重启工作台服务）
+- `scripts/update.py` —— 更新器（GitHub Releases 包 → git pull / 源码包覆盖 → 重启工作台服务）
+- `scripts/build_dist.py` —— 打包发布物（本地与 CI 共用；生成 `dist/*.zip` + `SHA256SUMS.txt`）
 - `dashboard.html` + `dashboard_data.js` —— 可视化工作台（静态版）
 - `dashboard_inline.html` —— 自含数据的单文件工作台（预览/分享用）
 - `assets/echarts.min.js` —— 离线图表库

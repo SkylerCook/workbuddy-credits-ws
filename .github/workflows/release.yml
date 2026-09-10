@@ -1,0 +1,47 @@
+name: release
+
+# 推 v* 标签即自动打包并发布 Release（参照常见包管理流程：tag = 版本，Release = 发行说明 + 资产）
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: 校验 tag 与 manifest.yaml 版本一致
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          mf="$(python scripts/build_dist.py --print-version)"
+          echo "tag=$tag  manifest=$mf"
+          if [ "$tag" != "$mf" ]; then
+            echo "::error::tag v$tag 与 manifest.yaml 的版本 $mf 不一致，请先同步版本号"
+            exit 1
+          fi
+
+      - name: 打包
+        run: python scripts/build_dist.py
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/workbuddy-credits-v*.zip \
+            dist/workbuddy-credits.zip \
+            dist/SHA256SUMS.txt

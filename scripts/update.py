@@ -3,40 +3,52 @@
 """
 积分工作台 skill 更新器（随 skill 分发）
 
-用途：把**已安装**的本 skill 更新到 GitHub 仓库最新版本，并重启工作台服务
+用途：把**已安装**的本 skill 更新到最新版本，并重启工作台服务
       （服务是 DETACHED 常驻进程，不重启不会加载新代码——这是必须的一步）。
 
 用法：
-    python update.py                 # 检查并更新；若工作台服务在跑则自动重启
-    python update.py --check         # 只检查是否有更新，不改动任何文件、不重启
-    python update.py --no-restart    # 更新后不重启工作台服务
-    python update.py --repo <url>    # 指定仓库地址
-    python update.py --proxy <url>   # 通过指定代理访问 GitHub（默认直连）
+    python update.py                      # 检查并更新；若工作台服务在跑则自动重启
+    python update.py --check              # 只检查是否有更新，不改动任何文件、不重启
+    python update.py --force              # 版本号相同也重新安装一遍
+    python update.py --source release     # 强制走 GitHub Releases 包
+    python update.py --source archive     # 强制走源码包覆盖（git clone → zip）
+    python update.py --no-restart         # 更新后不重启工作台服务
+    python update.py --repo <url>         # 指定仓库地址
+    python update.py --proxy <url>        # 通过指定代理访问 GitHub（默认直连）
+    python update.py --token <token>      # GitHub API 令牌（也读 GITHUB_TOKEN / GH_TOKEN）
 
-更新方式（自动检测）：
-    - 安装目录含 .git 且有 git 命令 → git pull --ff-only（增量、可回滚）
-    - 否则 → 取一份最新源码覆盖（合并式）：
-        优先 git clone --depth 1（走 github.com，实测比 codeload archive 稳）
-        无 git 或克隆失败 → 退回下载 <repo>/archive/refs/heads/<branch>.zip
-      注：国内部分网络可访问 github.com 但 codeload.github.com 不通，
-          故 zip 仅作兜底；必要时用 --proxy。
+更新来源（--source auto，默认）：
+    - 安装目录含 .git 且有 git 命令 → Git 增量（git pull --ff-only，可回滚）
+    - 复制安装（无 .git）           → GitHub Releases 包（推荐）
+
+GitHub Releases 流程（推荐路径）：
+    GET /repos/<owner>/<repo>/releases/latest
+      → 比对 tag 与本地 manifest.yaml 的 version
+      → 下载 workbuddy-credits-v<ver>.zip
+      → 用同 Release 的 SHA256SUMS.txt 校验 sha256（有则强制校验）
+      → 合并式覆盖安装 → 重启服务
+    任意一步失败自动退回源码包路径（git clone --depth 1 → codeload zip），
+    故国内网络下即使 api.github.com 不通也能更新。
 
 安全：
     - 用户数据在 ~/.workbuddy/workbuddy-credits-data/（skill 目录**外**），更新不影响
     - 仅覆盖仓库内文件，**不删除**本地已有文件（如生成物 dashboard_data.js）
     - 重启前会校验监听进程确为 python，避免误杀其它占用端口的程序
-    - zip 内文件为 LF（仓库存储形式）：若原目录是 CRLF 签出，覆盖后字节行尾会变，
-      但**内容一致**，不影响运行
-    - 下载内置 3 次重试（国内直连 codeload 偶发连接重置 WinError 10054）
+    - sha256 校验失败**拒绝安装**，不留半成品
+    - 下载内置 3 次重试（国内直连偶发连接重置 WinError 10054）
 """
 
 import argparse
+import hashlib
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -47,7 +59,9 @@ DEFAULT_REPO = "https://github.com/SkylerCook/workbuddy-credits-ws"
 DEFAULT_BRANCH = "main"
 PORT = 8090
 # 解压覆盖时跳过的顶层目录（与 skill 运行无关）
-IGNORE_TOP = {".git", "dist"}
+IGNORE_TOP = {".git", "dist", "__pycache__"}
+# Release 资产里的校验和文件名（不区分大小写）
+SUMS_NAMES = {"sha256sums.txt", "sha256sum.txt", "checksums.txt", "sha256sums"}
 
 _PROXY_KEYS = (
     "http_proxy", "https_proxy", "all_proxy",
@@ -67,6 +81,21 @@ def read_version(d):
         if s.startswith("version:"):
             return s.split(":", 1)[1].strip().strip("\"'")
     return "?"
+
+
+def ver_key(s):
+    parts = re.findall(r"\d+", s or "")
+    return tuple(int(x) for x in parts)
+
+
+def cmp_version(local, remote):
+    """'same' / 'newer'（远端更新）/ 'older'（远端更旧）/ 'unknown'"""
+    a, b = ver_key(local), ver_key(remote)
+    if not a or not b:
+        return "unknown"
+    if a == b:
+        return "same"
+    return "newer" if b > a else "older"
 
 
 # ---------------------------------------------------------------- git 方式
@@ -125,14 +154,10 @@ def git_update(d, proxy=""):
     return True, "", changed, before, after
 
 
-# ---------------------------------------------------------------- zip 方式
+# ---------------------------------------------------------------- 下载 / 解压
 
-def zip_url(repo, branch):
-    return "%s/archive/refs/heads/%s.zip" % (repo.rstrip("/"), branch)
-
-
-def download(url, dest, proxy="", attempts=3):
-    """下载到本地。国内访问 codeload 偶发连接重置（WinError 10054），故内置重试。"""
+def download(url, dest, proxy="", attempts=3, token=""):
+    """下载到本地。国内访问 GitHub 偶发连接重置（WinError 10054），故内置重试。"""
     last = None
     for i in range(attempts):
         try:
@@ -140,7 +165,10 @@ def download(url, dest, proxy="", attempts=3):
                 {"http": proxy, "https": proxy} if proxy else {}
             )
             opener = urllib.request.build_opener(handler)
-            req = urllib.request.Request(url, headers={"User-Agent": "workbuddy-credits-updater"})
+            headers = {"User-Agent": "workbuddy-credits-updater"}
+            if token:
+                headers["Authorization"] = "Bearer %s" % token
+            req = urllib.request.Request(url, headers=headers)
             with opener.open(req, timeout=90) as resp, open(dest, "wb") as f:
                 shutil.copyfileobj(resp, f)
             return
@@ -151,19 +179,54 @@ def download(url, dest, proxy="", attempts=3):
     raise last
 
 
-def fetch_zip(url, proxy, tmpdir):
-    """下载并解压，返回顶层目录（Path）。"""
-    zpath = os.path.join(tmpdir, "pkg.zip")
-    download(url, zpath, proxy)
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def unpack(zpath, tmpdir):
+    """解压 zip 并返回顶层目录（Path）。"""
     if not zipfile.is_zipfile(zpath):
         raise RuntimeError("下载内容不是有效 zip（可能是代理拦截页或 404）")
     with zipfile.ZipFile(zpath) as z:
         z.extractall(tmpdir)
-    # 跳过以 _ 开头的临时子目录（如克隆残留）
-    roots = [p for p in Path(tmpdir).iterdir() if p.is_dir() and not p.name.startswith("_")]
+    roots = [p for p in Path(tmpdir).iterdir()
+             if p.is_dir() and not p.name.startswith("_")]
     if not roots:
         raise RuntimeError("zip 结构异常：未找到顶层目录")
     return roots[0]
+
+
+def fetch_zip(url, proxy, tmpdir):
+    """下载并解压，返回顶层目录（Path）。"""
+    zpath = os.path.join(tmpdir, "pkg.zip")
+    download(url, zpath, proxy)
+    return unpack(zpath, tmpdir)
+
+
+def zip_apply(d, src):
+    """合并式覆盖：只覆盖仓库内文件，不删除本地多余文件。返回覆盖文件数。"""
+    count = 0
+    for p in sorted(src.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(src)
+        if rel.parts and rel.parts[0] in IGNORE_TOP:
+            continue
+        dst = Path(d) / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(p, dst)
+        count += 1
+    return count
+
+
+# ---------------------------------------------------------------- 源码包路径
+
+def zip_url(repo, branch):
+    return "%s/archive/refs/heads/%s.zip" % (repo.rstrip("/"), branch)
 
 
 def _clone_into(dest, repo, branch, proxy):
@@ -188,20 +251,143 @@ def obtain_source(repo, branch, proxy, base_tmp):
     return fetch_zip(zip_url(repo, branch), proxy, base_tmp), "zip 下载"
 
 
-def zip_apply(d, src):
-    """合并式覆盖：只覆盖仓库内文件，不删除本地多余文件。返回覆盖文件数。"""
-    count = 0
-    for p in src.rglob("*"):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(src)
-        if rel.parts and rel.parts[0] in IGNORE_TOP:
-            continue
-        dst = Path(d) / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(p, dst)
-        count += 1
-    return count
+# ---------------------------------------------------------------- GitHub Releases
+
+def repo_slug(repo):
+    """从仓库地址提取 owner/name；无法解析返回空串。"""
+    s = (repo or "").strip().rstrip("/")
+    if s.endswith(".git"):
+        s = s[:-4]
+    for pre in ("https://github.com/", "http://github.com/", "git@github.com:"):
+        if s.lower().startswith(pre):
+            s = s[len(pre):]
+    parts = [p for p in s.split("/") if p]
+    if len(parts) < 2:
+        return ""
+    return "%s/%s" % (parts[-2], parts[-1])
+
+
+def _api_get(url, proxy="", token="", timeout=60):
+    handler = urllib.request.ProxyHandler(
+        {"http": proxy, "https": proxy} if proxy else {}
+    )
+    opener = urllib.request.build_opener(handler)
+    headers = {
+        "User-Agent": "workbuddy-credits-updater",
+        "Accept": "application/vnd.github+json",
+    }
+    if token:
+        headers["Authorization"] = "Bearer %s" % token
+    req = urllib.request.Request(url, headers=headers)
+    with opener.open(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def latest_release(repo, proxy="", token=""):
+    """取最新 Release 信息；失败抛异常（附可读原因）。"""
+    slug = repo_slug(repo)
+    if not slug:
+        raise RuntimeError("无法解析仓库地址：%s" % repo)
+    url = "https://api.github.com/repos/%s/releases/latest" % slug
+    try:
+        data = _api_get(url, proxy, token)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            raise RuntimeError("仓库 %s 尚无 Release（或仓库不存在）" % slug)
+        if e.code in (403, 429):
+            raise RuntimeError("GitHub API 访问受限（%d），可用 --token 提高限额" % e.code)
+        raise RuntimeError("GitHub API 返回 %d" % e.code)
+    tag = (data.get("tag_name") or "").strip()
+    assets = [{
+        "name": a.get("name") or "",
+        "url": a.get("browser_download_url") or "",
+        "size": a.get("size") or 0,
+    } for a in (data.get("assets") or [])]
+    return {
+        "slug": slug,
+        "tag": tag,
+        "version": tag.lstrip("vV"),
+        "published": (data.get("published_at") or "")[:10],
+        "notes": (data.get("body") or "").strip(),
+        "html_url": data.get("html_url") or "",
+        "assets": assets,
+    }
+
+
+def pick_asset(assets, prefer):
+    """按优先级选资产：先精确名，再约定名，最后第一个 .zip。"""
+    for want in prefer:
+        for a in assets:
+            if a["name"] == want:
+                return a
+    for a in assets:
+        if a["name"].lower().endswith(".zip"):
+            return a
+    return None
+
+
+def sums_asset(assets):
+    for a in assets:
+        if a["name"].lower() in SUMS_NAMES:
+            return a
+    return None
+
+
+def parse_sums(path):
+    """解析 SHA256SUMS：{文件名: sha256}"""
+    out = {}
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            out[parts[-1].lstrip("*").strip()] = parts[0].strip().lower()
+    return out
+
+
+def release_fetch(rel, proxy, token, tmpdir):
+    """下载 Release 的 zip 资产并校验，返回 (zip 路径, 资产名, 校验说明)。"""
+    ver = rel["version"]
+    asset = pick_asset(rel["assets"], (
+        "workbuddy-credits-v%s.zip" % ver,
+        "workbuddy-credits.zip",
+    ))
+    if not asset:
+        raise RuntimeError("Release %s 没有可用的 zip 资产" % rel["tag"])
+
+    zpath = os.path.join(tmpdir, "release.zip")
+    download(asset["url"], zpath, proxy, token=token)
+
+    note = "未提供校验文件，已跳过"
+    sums = sums_asset(rel["assets"])
+    if sums:
+        spath = os.path.join(tmpdir, "_SHA256SUMS.txt")
+        download(sums["url"], spath, proxy, token=token)
+        want = parse_sums(spath).get(asset["name"])
+        if not want:
+            note = "校验文件中无 %s 条目，已跳过" % asset["name"]
+        else:
+            got = sha256_file(zpath)
+            if got != want:
+                raise RuntimeError(
+                    "sha256 校验失败，已中止安装\n    期望 %s\n    实际 %s" % (want, got)
+                )
+            note = "sha256 校验通过（%s…）" % got[:16]
+    return zpath, asset["name"], note
+
+
+def print_notes(notes, limit=12):
+    if not notes:
+        return
+    lines = [x.rstrip() for x in notes.splitlines()]
+    shown = [x for x in lines if x.strip()][:limit]
+    print("  发行说明：")
+    for x in shown:
+        print("    %s" % x)
+    if len([x for x in lines if x.strip()]) > limit:
+        print("    …（完整内容见 Release 页面）")
 
 
 # ---------------------------------------------------------------- 服务重启
@@ -284,10 +470,16 @@ def start_service():
 def main():
     ap = argparse.ArgumentParser(description="更新已安装的 workbuddy-credits skill")
     ap.add_argument("--check", action="store_true", help="只检查是否有更新，不做改动")
+    ap.add_argument("--force", action="store_true", help="版本号相同也重新安装")
+    ap.add_argument("--source", choices=("auto", "release", "git", "archive"),
+                    default="auto", help="更新来源（默认 auto）")
     ap.add_argument("--no-restart", action="store_true", help="更新后不重启工作台服务")
     ap.add_argument("--repo", default=DEFAULT_REPO, help="仓库地址")
-    ap.add_argument("--branch", default=DEFAULT_BRANCH, help="分支名")
+    ap.add_argument("--branch", default=DEFAULT_BRANCH, help="分支名（源码包方式用）")
     ap.add_argument("--proxy", default="", help="访问 GitHub 的代理（默认直连）")
+    ap.add_argument("--token", default=os.environ.get("GITHUB_TOKEN")
+                    or os.environ.get("GH_TOKEN") or "",
+                    help="GitHub API 令牌（默认读 GITHUB_TOKEN / GH_TOKEN）")
     args = ap.parse_args()
 
     d = str(SKILL_DIR)
@@ -301,9 +493,12 @@ def main():
     if pull_mode:
         mode_desc = "Git 仓库（增量 pull）"
     elif has_git_cmd:
-        mode_desc = "复制安装（git 浅克隆覆盖）"
+        mode_desc = "复制安装（Release 包 / git 浅克隆）"
     else:
-        mode_desc = "复制安装（zip 下载覆盖）"
+        mode_desc = "复制安装（Release 包 / zip 下载）"
+    source = args.source
+    if source == "auto":
+        source = "git" if pull_mode else "release"
     print("安装目录：%s" % d)
     print("安装方式：%s" % mode_desc)
     print("当前版本：%s" % old_ver)
@@ -311,6 +506,39 @@ def main():
 
     # ---------- 只检查 ----------
     if args.check:
+        # 以 Release 为版本权威（1 次 API 请求），失败再退回 git/源码包判断
+        try:
+            rel = latest_release(args.repo, args.proxy, args.token)
+            state = cmp_version(old_ver, rel["version"])
+            line = "最新版本：%s" % rel["version"]
+            if rel["published"]:
+                line += "（发布 %s）" % rel["published"]
+            print(line)
+            if rel["html_url"]:
+                print("Release  ：%s" % rel["html_url"])
+            print_notes(rel["notes"])
+            print("")
+            if state == "newer":
+                print("● 有更新：%s → %s。运行 `python update.py` 即可更新。" % (old_ver, rel["version"]))
+            elif state == "same":
+                if args.force:
+                    print("✓ 已是最新版本（%s）；已指定 --force，仍会重装。" % old_ver)
+                else:
+                    print("✓ 已是最新版本（%s）。" % old_ver)
+            elif state == "older":
+                print("! 本地版本（%s）高于 Release（%s），跳过更新。" % (old_ver, rel["version"]))
+            else:
+                print("? 版本号无法比较（本地 %s / 远端 %s）。" % (old_ver, rel["version"]))
+            if pull_mode:
+                has_new, behind, err = git_check(d, args.proxy)
+                if err:
+                    print("（Git 检查不可用：%s）" % err)
+                elif has_new:
+                    print("（Git 仓库另有 %d 个未发布提交，可 `git pull` 获取）" % behind)
+            return 0
+        except Exception as e:
+            print("（Release 检查不可用：%s）" % e)
+            print("回退到源码包判断…\n")
         if pull_mode:
             has_new, behind, err = git_check(d, args.proxy)
             if err:
@@ -322,7 +550,6 @@ def main():
             else:
                 print("✓ 已是最新版本（%s）。" % old_ver)
             return 0
-        # 复制安装：取一份远端源码比对版本号
         tmpdir = tempfile.mkdtemp(prefix="wb_upd_")
         try:
             src, how = obtain_source(args.repo, args.branch, args.proxy, tmpdir)
@@ -340,41 +567,98 @@ def main():
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
-    # ---------- 更新前记录服务状态 ----------
+    # ---------- 上游版本（Release 优先，仅用于提示与拦截）----------
+    rel = None
+    if source == "release":
+        try:
+            rel = latest_release(args.repo, args.proxy, args.token)
+        except Exception as e:
+            print("✗ 取 Release 失败：%s" % e)
+            print("  提示：网络不通时请加 --proxy <地址>；或改用 --source archive。")
+            return 1
+    else:
+        try:
+            rel = latest_release(args.repo, args.proxy, args.token)
+        except Exception:
+            rel = None
+
+    if rel:
+        state = cmp_version(old_ver, rel["version"])
+        print("上游版本：%s（%s）" % (rel["version"], rel["tag"]))
+        if state == "same" and not args.force:
+            print("✓ 已是最新版本（%s），无需更新。加 --force 可强制重装。" % old_ver)
+            return 0
+        if state == "older" and not args.force:
+            print("! 本地版本（%s）高于远端（%s），跳过。加 --force 可强制覆盖。" % (old_ver, rel["version"]))
+            return 0
+        print("")
+
     was_running = bool(listener_pids(PORT))
 
     # ---------- 执行更新 ----------
     changed_count = 0
-    if pull_mode:
-        ok, err, changed, _b, _a = git_update(d, args.proxy)
-        if not ok:
-            print("✗ 更新失败：%s" % err)
-            print("  提示：本地若有未提交改动会阻止 --ff-only 更新，请先处理改动。")
-            print("       如网络不通，请加 --proxy <地址>。")
-            return 1
-        changed_count = len(changed)
-        if changed_count:
-            print("已更新 %d 个文件：" % changed_count)
-            for f in changed[:20]:
-                print("  · %s" % f)
-            if changed_count > 20:
-                print("  · …另有 %d 个" % (changed_count - 20))
-        else:
-            print("✓ 已是最新，无需更新。")
-    else:
-        tmpdir = tempfile.mkdtemp(prefix="wb_upd_")
-        try:
+    tmpdir = tempfile.mkdtemp(prefix="wb_upd_")
+    try:
+        done = False
+
+        if source == "git":
+            if not pull_mode:
+                print("✗ --source git 要求安装目录是 Git 仓库（含 .git）")
+                return 1
+            ok, err, changed, _b, _a = git_update(d, args.proxy)
+            if not ok:
+                print("✗ 更新失败：%s" % err)
+                print("  提示：本地若有未提交改动会阻止 --ff-only 更新，请先处理改动。")
+                print("       如网络不通，请加 --proxy <地址>。")
+                return 1
+            changed_count = len(changed)
+            if changed_count:
+                print("已更新 %d 个文件：" % changed_count)
+                for f in changed[:20]:
+                    print("  · %s" % f)
+                if changed_count > 20:
+                    print("  · …另有 %d 个" % (changed_count - 20))
+            else:
+                print("✓ 已是最新，无需更新。")
+            done = True
+
+        elif source == "release":
+            assert rel is not None
+            zpath, aname, note = release_fetch(rel, args.proxy, args.token, tmpdir)
+            print("下载资产：%s" % aname)
+            print("完整性  ：%s" % note)
+            src = unpack(zpath, tmpdir)
+            changed_count = zip_apply(d, src)
+            print("已覆盖 %d 个文件。" % changed_count)
+            print_notes(rel["notes"])
+            done = True
+
+        else:  # archive
             src, how = obtain_source(args.repo, args.branch, args.proxy, tmpdir)
             print("获取方式：%s" % how)
             print("远端版本：%s" % read_version(src))
             changed_count = zip_apply(d, src)
             print("已覆盖 %d 个文件。" % changed_count)
-        except Exception as e:
-            print("✗ 更新失败：%s" % e)
+            done = True
+
+    except Exception as e:
+        print("✗ 更新失败：%s" % e)
+        # Release 路径失败时自动退回源码包（--source release 除外）
+        if source == "release":
+            print("  提示：网络不通时请加 --proxy <地址>；或改用 --source archive。")
+            return 1
+        print("回退到源码包方式…")
+        try:
+            src, how = obtain_source(args.repo, args.branch, args.proxy, tmpdir)
+            print("获取方式：%s" % how)
+            changed_count = zip_apply(d, src)
+            print("已覆盖 %d 个文件。" % changed_count)
+        except Exception as e2:
+            print("✗ 源码包更新也失败：%s" % e2)
             print("  提示：网络不通时请加 --proxy <地址>；或改用 --repo <镜像>。")
             return 1
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
     new_ver = read_version(d)
     print("")
