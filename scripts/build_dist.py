@@ -18,7 +18,10 @@
       → 用户数据（dashboard_data.js、dashboard_inline.html）、.git、dist、__pycache__
         以及用户自建的其它文件永远不会进包
     - zip 内顶层目录固定为 workbuddy-credits/，解压即得到可用的 skill 目录
-    - 条目按名称排序、时间戳统一取当次 git 提交时间 → 同一次提交可复现出相同字节
+    - 条目按名称排序、时间戳统一取当次 git 提交时间
+      → 同一次提交、相同 Python/zlib 版本下可复现出相同字节
+        （zlib 版本不同时压缩流可能不同，故跨环境不保证字节一致；
+          sha256 以随包发布的 SHA256SUMS.txt 为准）
 """
 
 import argparse

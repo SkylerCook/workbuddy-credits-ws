@@ -110,7 +110,7 @@ git clone https://github.com/SkylerCook/workbuddy-credits-ws.git ~/.workbuddy/sk
 
 ### 方式 B：解压安装（离线）
 
-1. 从 [Releases 页面](https://github.com/SkylerCook/workbuddy-credits-ws/releases/latest) 下载 `workbuddy-credits-v<版本>.zip`（**永久直链**：`https://github.com/SkylerCook/workbuddy-credits-ws/releases/latest/download/workbuddy-credits.zip`），并核对同页 `SHA256SUMS.txt` 的 sha256。
+1. 从 [Releases 页面](https://github.com/SkylerCook/workbuddy-credits-ws/releases/latest) 下载 `workbuddy-credits-v<版本>.zip`（**永久直链**：`https://github.com/SkylerCook/workbuddy-credits-ws/releases/latest/download/workbuddy-credits.zip`，部分网络下直链可能不通，改用页面下载即可），并核对同页 `SHA256SUMS.txt` 的 sha256。
 2. 解压得到 `workbuddy-credits/` 目录。
 3. 放到用户级 skills 目录：
 
@@ -355,7 +355,11 @@ python scripts/build_dist.py                  # 输出 dist/ 三件套
 python scripts/build_dist.py --print-version  # 只打印 manifest.yaml 里的版本号（CI 用它校验 tag）
 ```
 
-> 打包可复现：zip 条目按名称排序、时间戳统一取当次 git 提交时间，同一次提交重复打包得到相同 sha256。
+> 打包可复现：zip 条目按名称排序、时间戳统一取当次 git 提交时间。同一次提交、相同 Python/zlib 版本下重复打包得到相同字节；跨环境不保证字节一致（**sha256 以随包发布的 `SHA256SUMS.txt` 为准**）。
+
+### 下载域名说明
+
+`update.py` 下载 Release 资产时**优先走 API 资产端点**（`api.github.com` → 302 → `release-assets.githubusercontent.com`），失败才退回 `browser_download_url`（`github.com`）。实测国内网络下 `github.com` 会间歇性不可达，而 API 域名与 CDN 稳定，故 API 端点优先。同理，`releases/latest/download/...` 永久直链依赖 `github.com`，偶发不通时改用 `update.py` 或 Release 页面手动下载。
 
 ---
 
