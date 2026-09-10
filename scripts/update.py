@@ -15,13 +15,19 @@
 
 更新方式（自动检测）：
     - 安装目录含 .git 且有 git 命令 → git pull --ff-only（增量、可回滚）
-    - 否则 → 下载 <repo>/archive/refs/heads/<branch>.zip 解压覆盖（合并式）
-      注意：GitHub 直连在国内常不可达，必要时用 --proxy。
+    - 否则 → 取一份最新源码覆盖（合并式）：
+        优先 git clone --depth 1（走 github.com，实测比 codeload archive 稳）
+        无 git 或克隆失败 → 退回下载 <repo>/archive/refs/heads/<branch>.zip
+      注：国内部分网络可访问 github.com 但 codeload.github.com 不通，
+          故 zip 仅作兜底；必要时用 --proxy。
 
 安全：
     - 用户数据在 ~/.workbuddy/workbuddy-credits-data/（skill 目录**外**），更新不影响
     - 仅覆盖仓库内文件，**不删除**本地已有文件（如生成物 dashboard_data.js）
     - 重启前会校验监听进程确为 python，避免误杀其它占用端口的程序
+    - zip 内文件为 LF（仓库存储形式）：若原目录是 CRLF 签出，覆盖后字节行尾会变，
+      但**内容一致**，不影响运行
+    - 下载内置 3 次重试（国内直连 codeload 偶发连接重置 WinError 10054）
 """
 
 import argparse
@@ -30,6 +36,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -124,14 +131,24 @@ def zip_url(repo, branch):
     return "%s/archive/refs/heads/%s.zip" % (repo.rstrip("/"), branch)
 
 
-def download(url, dest, proxy=""):
-    handler = urllib.request.ProxyHandler(
-        {"http": proxy, "https": proxy} if proxy else {}
-    )
-    opener = urllib.request.build_opener(handler)
-    req = urllib.request.Request(url, headers={"User-Agent": "workbuddy-credits-updater"})
-    with opener.open(req, timeout=90) as resp, open(dest, "wb") as f:
-        shutil.copyfileobj(resp, f)
+def download(url, dest, proxy="", attempts=3):
+    """下载到本地。国内访问 codeload 偶发连接重置（WinError 10054），故内置重试。"""
+    last = None
+    for i in range(attempts):
+        try:
+            handler = urllib.request.ProxyHandler(
+                {"http": proxy, "https": proxy} if proxy else {}
+            )
+            opener = urllib.request.build_opener(handler)
+            req = urllib.request.Request(url, headers={"User-Agent": "workbuddy-credits-updater"})
+            with opener.open(req, timeout=90) as resp, open(dest, "wb") as f:
+                shutil.copyfileobj(resp, f)
+            return
+        except Exception as e:  # noqa: BLE001 - 网络异常种类多，统一重试
+            last = e
+            if i < attempts - 1:
+                time.sleep(2 * (i + 1))
+    raise last
 
 
 def fetch_zip(url, proxy, tmpdir):
@@ -142,10 +159,33 @@ def fetch_zip(url, proxy, tmpdir):
         raise RuntimeError("下载内容不是有效 zip（可能是代理拦截页或 404）")
     with zipfile.ZipFile(zpath) as z:
         z.extractall(tmpdir)
-    roots = [p for p in Path(tmpdir).iterdir() if p.is_dir()]
+    # 跳过以 _ 开头的临时子目录（如克隆残留）
+    roots = [p for p in Path(tmpdir).iterdir() if p.is_dir() and not p.name.startswith("_")]
     if not roots:
         raise RuntimeError("zip 结构异常：未找到顶层目录")
     return roots[0]
+
+
+def _clone_into(dest, repo, branch, proxy):
+    """浅克隆到 dest（走 github.com，比 codeload archive 稳定）。"""
+    r = _git(["clone", "--depth", "1", "--branch", branch, repo, str(dest)], proxy)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip())
+
+
+def obtain_source(repo, branch, proxy, base_tmp):
+    """获取最新源码目录，返回 (src_path, 方式说明)。
+
+    优先 git 浅克隆，无 git 或克隆失败时退回下载 zip。
+    """
+    clone_dir = Path(base_tmp) / "_clone"
+    if shutil.which("git") is not None:
+        try:
+            _clone_into(clone_dir, repo, branch, proxy)
+            return clone_dir, "git clone --depth 1"
+        except Exception:
+            shutil.rmtree(clone_dir, ignore_errors=True)
+    return fetch_zip(zip_url(repo, branch), proxy, base_tmp), "zip 下载"
 
 
 def zip_apply(d, src):
@@ -255,16 +295,23 @@ def main():
         print("✗ 未找到 skill 安装目录（%s 下无 SKILL.md）" % d)
         return 1
 
-    use_git = has_git_dir(SKILL_DIR)
+    pull_mode = has_git_dir(SKILL_DIR)
+    has_git_cmd = shutil.which("git") is not None
     old_ver = read_version(d)
+    if pull_mode:
+        mode_desc = "Git 仓库（增量 pull）"
+    elif has_git_cmd:
+        mode_desc = "复制安装（git 浅克隆覆盖）"
+    else:
+        mode_desc = "复制安装（zip 下载覆盖）"
     print("安装目录：%s" % d)
-    print("安装方式：%s" % ("Git 仓库（增量更新）" if use_git else "复制安装（zip 覆盖）"))
+    print("安装方式：%s" % mode_desc)
     print("当前版本：%s" % old_ver)
     print("")
 
     # ---------- 只检查 ----------
     if args.check:
-        if use_git:
+        if pull_mode:
             has_new, behind, err = git_check(d, args.proxy)
             if err:
                 print("✗ 检查失败：%s" % err)
@@ -275,20 +322,20 @@ def main():
             else:
                 print("✓ 已是最新版本（%s）。" % old_ver)
             return 0
-        # zip 方式：下载后比对版本号
+        # 复制安装：取一份远端源码比对版本号
         tmpdir = tempfile.mkdtemp(prefix="wb_upd_")
         try:
-            src = fetch_zip(zip_url(args.repo, args.branch), args.proxy, tmpdir)
+            src, how = obtain_source(args.repo, args.branch, args.proxy, tmpdir)
             remote_ver = read_version(src)
             if remote_ver != old_ver:
-                print("● 有更新：本地 %s → 远端 %s。运行 `python update.py` 即可更新。"
-                      % (old_ver, remote_ver))
+                print("● 有更新：本地 %s → 远端 %s（方式：%s）。运行 `python update.py` 即可更新。"
+                      % (old_ver, remote_ver, how))
             else:
-                print("✓ 版本号一致（%s），可能已是最新。" % old_ver)
+                print("✓ 版本号一致（%s），可能已是最新（方式：%s）。" % (old_ver, how))
             return 0
         except Exception as e:
             print("✗ 检查失败：%s" % e)
-            print("  提示：GitHub 直连可能不通，请加 --proxy <地址>。")
+            print("  提示：网络不通时请加 --proxy <地址>；或改用 --repo <镜像>。")
             return 1
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -298,7 +345,7 @@ def main():
 
     # ---------- 执行更新 ----------
     changed_count = 0
-    if use_git:
+    if pull_mode:
         ok, err, changed, _b, _a = git_update(d, args.proxy)
         if not ok:
             print("✗ 更新失败：%s" % err)
@@ -317,14 +364,14 @@ def main():
     else:
         tmpdir = tempfile.mkdtemp(prefix="wb_upd_")
         try:
-            src = fetch_zip(zip_url(args.repo, args.branch), args.proxy, tmpdir)
-            remote_ver = read_version(src)
-            print("远端版本：%s" % remote_ver)
+            src, how = obtain_source(args.repo, args.branch, args.proxy, tmpdir)
+            print("获取方式：%s" % how)
+            print("远端版本：%s" % read_version(src))
             changed_count = zip_apply(d, src)
             print("已覆盖 %d 个文件。" % changed_count)
         except Exception as e:
             print("✗ 更新失败：%s" % e)
-            print("  提示：GitHub 直连可能不通，请加 --proxy <地址>。")
+            print("  提示：网络不通时请加 --proxy <地址>；或改用 --repo <镜像>。")
             return 1
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)

@@ -130,11 +130,12 @@ python ~/.workbuddy/skills/workbuddy-credits/scripts/update.py --check  # 只检
 | 安装方式 | 更新行为 |
 |---|---|
 | Git 克隆（目录含 `.git`） | `git pull --ff-only` —— 增量更新，可用 `git log` 回滚 |
-| 解压 / URL 导入（无 `.git`） | 下载仓库 `main.zip` 解压**合并式覆盖**，不删除本地已有文件 |
+| 解压 / URL 导入（无 `.git`） | 优先 `git clone --depth 1` 取最新源码覆盖；无 git 时退回下载 `main.zip`。均为**合并式覆盖**，不删除本地已有文件 |
 
 要点：
 
-- **GitHub 直连不通时**加 `--proxy <地址>`；或改用 `--repo <镜像地址>`。
+- **复制安装优先走 git**：国内部分网络可访问 `github.com` 但 `codeload.github.com`（archive 域名）不通，故 zip 仅作兜底。
+- **网络不通时**加 `--proxy <地址>`；或改用 `--repo <镜像地址>`。
 - 本地手改过 skill 目录里的文件会阻止 `--ff-only` 更新（Git 方式），请先处理改动。
 - **用户数据不受影响**：数据在 `~/.workbuddy/workbuddy-credits-data/`，位于 skill 目录之外。
 - **更新后服务会自动重启** —— 服务是 DETACHED 常驻进程，不重启不会加载新代码。
