@@ -153,7 +153,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = json.dumps(res, ensure_ascii=False).encode("utf-8")
             self._send(body, "application/json; charset=utf-8", 200)
         elif path == "/dashboard_data.js":
+            # 落盘/静态通道：必须剥离提示词（与 cmd_render 同一硬约束）
             data = build_json()
+            if isinstance(data, dict) and not data.get("error"):
+                data = wc.strip_prompts(data)
             body = ("window.CREDITS_DATA = "
                     + json.dumps(data, ensure_ascii=False, indent=2) + ";\n").encode("utf-8")
             self._send(body, "application/javascript; charset=utf-8")

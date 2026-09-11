@@ -86,6 +86,8 @@ Agent 会运行 `scripts/update.py`：
 | 每日签到 | 「签到领积分」「帮我签到」 | 调用签到接口（幂等，已签则跳过）；日常推荐在工作台一键签到 |
 | 打开看板 | 「打开工作台」「打开积分工作台」「启动工作台」「打开积分看板」 | 后台启动本地服务，打开可视化看板（可实时刷新） |
 | 消耗分析 | 「分析积分消耗」「消耗趋势」 | 分析过期浪费 / 趋势 / 签到效率 |
+| 请求明细 | 「同步消耗明细」「拉取请求级流水」 | 同步 L5 请求级流水到本地存档（窄窗口保提示词） |
+| 包生命周期 | 「看下积分包」「哪些包过期了」 | 拉取 L6 权威包清单（有效期内 / 已过期）与浪费归因 |
 | 导出列表 | 「导出积分列表」「导出一份积分清单」 | 生成 Markdown / CSV 清单 |
 | 创建快捷方式 | 「创建桌面快捷方式」「创建开始菜单快捷方式」 | 生成 .lnk 快捷方式（指向双击启动器，图标为青柠圆角） |
 | 更新 skill | 「更新积分 skill」「升级积分工作台」 | 拉取最新 Release 包（sha256 校验）覆盖并重启工作台服务 |
@@ -199,6 +201,12 @@ python .../workbuddy_credits.py checkin      # 签到（幂等）
 python .../workbuddy_credits.py record       # 记录余额快照 + 自积累账本
 python .../workbuddy_credits.py analyze      # 分析（浪费/趋势/签到效率）
 python .../workbuddy_credits.py usage        # 消耗明细（今日/按天/会话）
+python .../workbuddy_credits.py sync         # 同步请求级流水（L5，默认近 31 天）
+python .../workbuddy_credits.py sync --days 7   # 窄窗口（**≤31，否则提示词被剥离**）
+python .../workbuddy_credits.py requests     # 查看请求级流水（本地存档）
+python .../workbuddy_credits.py packages     # 包生命周期（有效期内）
+python .../workbuddy_credits.py packages --expired  # 包生命周期（已过期）
+python .../workbuddy_credits.py waste        # 过期浪费（权威口径，按到期月）
 python .../workbuddy_credits.py expire-check 36  # 检查 N 小时内到期批次
 python .../workbuddy_credits.py render       # 生成工作台数据
 python .../workbuddy_credits.py --export     # 导出积分列表 Markdown
@@ -206,6 +214,8 @@ python .../workbuddy_credits.py --json       # 原始 JSON
 ```
 
 运行要求：Python 3（`python` 或 `python3`），无需 pip 安装任何依赖。
+
+> `sync` 的窗口宽度**必须 ≤31 天**：服务端在窗口 ≥32 天时会静默剥离提示词字段（HTTP 200 且 `code:0`，无报错）。提示词仅保留约 32 天，过期不可回补 —— 想留着就得勤跑窄窗。
 
 ---
 
@@ -217,13 +227,18 @@ python .../workbuddy_credits.py --json       # 原始 JSON
 python .../serve.py          # 启动本地服务（默认 8090）
 ```
 
-浏览器打开 `http://127.0.0.1:8090`，页面右上角「刷新数据」按钮可实时重拉最新数据。工作台包含：
+浏览器打开 `http://127.0.0.1:8090`，首屏即走实时接口，右上角「刷新数据」按钮可重拉最新数据。工作台包含：
 
+- **数据源健康徽章**（三态：正常/降级/缺失/无基准），任一接口变动立即显形
 - 总览卡片（可用积分、今日已用、预计可用天数、累计消耗、即将到期、过期浪费、签到状态、登录态有效期）
 - 每日/累计消耗图、消耗热力图（日期×小时）
+- **消耗明细（请求级）**：服务端权威流水表 + 按模型/客户端/用途的构成占比 + 口径对账提示
+  - **提示词列实时可见**（HTTP 模式），但**永不落盘**；`file://` 静态版该列显示「—」
 - 收支账本（日粒度，自积累）
-- 最近会话消耗明细、过期浪费统计、批次到期表
-- 顶部使用建议、一键导出（批次 CSV / 消耗 CSV）
+- 最近会话消耗明细
+- **包生命周期**：`有效期内` / `已过期` 双页签，含浪费归因与按到期月分布
+- 过期浪费统计、批次到期表
+- 顶部使用建议、一键导出（批次 / 消耗 / 明细 / 生命周期 CSV）
 - 首次加载到期提醒弹框（阈值默认 24h，可自定义/关闭）
 - 首次加载**未签到提醒**弹框（当天未签到 → 引导点击「立即签到」，弹框内可直接签到）
 - 顶部工具栏「立即签到」「桌面快捷方式」「开始菜单快捷方式」按钮
@@ -247,7 +262,17 @@ python .../serve.py          # 启动本地服务（默认 8090）
 
 ### 数据存储
 
-自积累数据存 `~/.workbuddy/workbuddy-credits-data/`（余额快照、逐包消耗历史、签到历史、包到账事件）。**不写** WorkBuddy 客户端自己的 `workbuddy.db`。
+自积累数据存 `~/.workbuddy/workbuddy-credits-data/`：
+
+| 文件 | 内容 | 可回补 |
+|------|------|--------|
+| `snapshots.jsonl` | 余额快照 | ✅ |
+| `usage_history.json` | 逐包余量采样（含状态/到期） | ❌ 衰减轨迹不可回补 |
+| `income_events.json` | 到账/签到事件（对账归因用） | ✅ |
+| `checkin_history.json` | 签到记录 | ✅ |
+| `requests_history.jsonl` | 请求级消耗流水（按 `requestId` 去重合并） | 消耗可回补；**提示词不可** |
+
+**不写** WorkBuddy 客户端自己的 `workbuddy.db`。提示词字段（`input`）**永不落盘**：`render` 与静态通道写入前都会强制剥离。
 
 ---
 
@@ -264,7 +289,7 @@ workbuddy-credits-ws/
 ├── .gitignore                    # 忽略 dist/、用户数据、缓存
 ├── .gitattributes                # 行尾统一为 LF（覆盖 Windows 的 core.autocrlf）
 ├── scripts/
-│   ├── workbuddy_credits.py      # 核心脚本（查询/签到/快照/分析/渲染/账本）
+│   ├── workbuddy_credits.py      # 核心脚本（查询/签到/快照/分析/渲染/L5 流水/L6 包生命周期/对账）
 │   ├── serve.py                  # 本地可刷新工作台服务
 │   ├── launcher.py               # 双击启动器（独立进程常驻 + 生成 VBS）
 │   ├── shortcut.py               # 创建桌面/开始菜单快捷方式
@@ -276,7 +301,7 @@ workbuddy-credits-ws/
 │   ├── favicon.png               # 浏览器标签栏图标（64px 圆角）
 │   └── workbuddy-logo.ico        # 快捷方式图标（多尺寸圆角）
 ├── references/
-│   ├── api.md                    # 接口端点、请求头、字段映射
+│   ├── api.md                    # 接口端点、请求头、字段映射、分层口径与关键坑
 │   └── checkin.md                # 签到机制与自动化说明（为何不用定时任务）
 ├── .github/workflows/release.yml  # 推 v* tag 自动打包并发布 Release
 └── dist/                         # 打包产物（git 忽略，经 Releases 分发）
@@ -294,6 +319,23 @@ workbuddy-credits-ws/
 
 **Q：工作台图表空白？**
 若用 `serve.py` 方式，直接点「刷新数据」；若静态打开，先运行 `render` 生成 `dashboard_data.js` 再刷新。
+
+**Q：后台起的服务报「未找到登录态」，但前台脚本正常？**
+部分沙箱环境会拦截**后台进程**读 C 盘登录态。把登录态复制一份到非 C 盘，用环境变量指过去再起服务：
+
+```bash
+cp "$LOCALAPPDATA/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info" "D:/somewhere/workbuddy-desktop.info"
+WORKBUDDY_AUTH_FILE="D:/somewhere/workbuddy-desktop.info" python scripts/serve.py 8090
+```
+
+**Q：消耗明细里的「提示词」列是空的？**
+两种情况：① 该条记录已超过服务端约 **32 天**保留期（服务端本身不再返回，不可回补）；② 你是用 `file://` 静态版打开的 —— 提示词**永不落盘**，静态版该列刻意留空。走 `serve.py`（HTTP）即可实时看到。
+
+**Q：`sync` 拉回来的提示词怎么是空的？**
+窗口宽度 **≥32 天**时服务端会**静默剥离**提示词（HTTP 200 且 `code:0`，没有任何报错）。改用窄窗口：`sync --days 7` 或按单日拉取。
+
+**Q：为什么「已过期损失」以前是 0，现在有了具体数字？**
+老接口 `get-user-resource` **完全不返回已过期包**，所以旧口径的过期浪费恒为 0（只能靠本地快照差分推算）。现在改用包生命周期接口（L6）权威直出，无需再依赖差分。
 
 **Q：更新完了，工作台还是老样子？**
 `update.py` 会自动重启工作台服务；如果你是自己手动覆盖文件安装的（没走 `update.py`），服务是常驻进程不会自动加载新代码——双击启动器重启，或先关掉旧服务再打开工作台。
@@ -321,7 +363,42 @@ Git 安装：在 skill 目录 `git checkout v<旧版本>` 后重启服务。Rele
 
 ---
 
-## 八、版本与发布（维护者）
+## 八、更新日志
+
+### v1.3.0 — 三层数据架构重构
+
+**背景**：此前工作台完全依赖**客户端可见**的本地数据（逐包采样快照 + 本地会话库），而网页控制台的接口数据拿不到，导致「已过期浪费」「请求级明细」「真实消耗口径」都只能靠推算，缺陷明显。本版把数据源重构为**三层架构**，让**服务端权威数据主导展示**。
+
+**新增数据源**：
+
+- **L5 请求级消耗流水**（`/get-user-request-usage`）——服务端权威、可回溯至 2026-05（窄窗口）。含模型 / 客户端 / 用途 / 单次积分 / **实时提示词**。
+- **L6 包生命周期**（`/get-user-resource-{paid,free}-packages`）——权威包清单，**首次能看到已过期包**，过期浪费由直出取代推算。
+
+**工作台新增**：
+
+- **数据源健康徽章**：四条链路（消耗明细 / 包生命周期 / 逐包采样 / 签到）三态标示，接口一挂当天就能看见
+- **消耗明细（请求级）**面板：权威流水的表格 + 模型/客户端/用途构成条 + 口径对账提示
+- **包生命周期**面板：`有效期内` / `已过期` 双页签，含浪费归因与按到期月分布
+- 口径切换：`今日已使用` / `每日消耗` 改为 **L5 优先、L2 兜底**，卡片上标注实际来源
+
+**关键设计**：
+
+- **提示词永不落盘**：`input` 只存在于内存中供实时展示；`render` 与静态通道写入前强制剥离（`strip_prompts` 硬约束）。`file://` 静态版该列留空
+- **窄窗口铁律**：L5 查询窗口宽度 **≥32 天会静默剥离提示词**（HTTP 200 且 `code:0`，无报错）。`sync` 默认 31 天并自动收敛
+- **双通路对账**：A = L5 请求级（有服务端历史）↔ B = L3→L2 包级采样。三态返回（`已对账` / `无基准` / `精度不足`），显式呈现从不静默跳过
+- **优雅降级**：每个新数据源独立 try/except 隔离，任一挂掉页面照常可用并显式降级
+
+**新增命令**：`sync` / `requests` / `packages [--expired]` / `waste`
+
+### v1.2.2 及更早
+
+- 行尾统一 LF（`.gitattributes`），打包自动清理旧版本包
+- 基于 GitHub Releases 的更新链路（sha256 校验）、双击启动器与桌面/开始菜单快捷方式
+- 工作台与签到流程（无需打开 WorkBuddy 即可签到）
+
+---
+
+## 九、版本与发布（维护者）
 
 本仓库采用 **tag = 版本，Release = 发行** 的包管理方式（与常见开源项目一致）。
 

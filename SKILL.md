@@ -73,6 +73,12 @@ python scripts/workbuddy_credits.py record          # 记录当前余额快照
 python scripts/workbuddy_credits.py analyze         # 分析（过期浪费/趋势/签到效率）
 python scripts/workbuddy_credits.py expire-check 36 # 检查 N 小时内到期批次
 python scripts/workbuddy_credits.py usage           # 消耗明细（本地 session_usage，含今日/按天/会话）
+python scripts/workbuddy_credits.py sync            # 同步请求级消耗流水（L5，默认近 31 天窄窗口）
+python scripts/workbuddy_credits.py sync --days 7   # 指定窗口天数（**必须 ≤31**，否则提示词被服务端剥离）
+python scripts/workbuddy_credits.py requests        # 查看请求级流水（本地存档，按时间倒序）
+python scripts/workbuddy_credits.py packages        # 包生命周期（有效期内，L6 权威口径）
+python scripts/workbuddy_credits.py packages --expired  # 包生命周期（已过期）
+python scripts/workbuddy_credits.py waste           # 过期浪费（L6 权威直出，按到期月分布）
 python scripts/workbuddy_credits.py render          # 生成工作台数据 dashboard_data.js
 python scripts/serve.py [端口]                       # 启动可刷新工作台（浏览器打开 http://127.0.0.1:8090）
 python scripts/launcher.py                           # 启动服务（独立进程常驻）+ 打开系统浏览器
@@ -87,14 +93,20 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 运行要求：Python 3（`python` 或 `python3`），无需 pip 安装任何依赖。
 
+> **`sync` 必须用窄窗口**：服务端在查询窗口宽度 ≥32 天时会**静默剥离**提示词字段（HTTP 200 + `code:0`，无任何报错）。`sync` 默认 31 天并自动收敛超窗请求；要保留提示词建议用 `--days 7` 甚至单日。提示词仅保留约 32 天，过期**永久不可回补** —— 需要提示词就得勤跑窄窗。
+
 ### 2. 可视化工作台
 
-`dashboard.html` 为工作台页面，展示总览、每日/累计消耗、会话级消耗明细、过期浪费统计与批次到期表。
+`dashboard.html` 为工作台页面，展示总览、每日/累计消耗、**请求级消耗明细**、会话级消耗、**包生命周期（有效期内/已过期双页签）**、过期浪费统计与批次到期表。
 
 两种打开方式：
 
-- **可刷新版（推荐）**：运行 `python scripts/serve.py` 启动本地服务，浏览器打开 `http://127.0.0.1:8090`，页面右上角「刷新数据」按钮会实时重新拉取最新积分/消耗。
-- **静态版**：运行 `render` 生成 `dashboard_data.js` 后，用浏览器 `file://` 打开 `dashboard.html`（数据为生成时快照）。`dashboard_inline.html` 为自含数据的单文件版，适合预览/分享。
+- **可刷新版（推荐）**：运行 `python scripts/serve.py` 启动本地服务，浏览器打开 `http://127.0.0.1:8090`。首屏即走实时接口（含提示词），右上角「刷新数据」按钮也会实时重新拉取。
+- **静态版**：运行 `render` 生成 `dashboard_data.js` 后，用浏览器 `file://` 打开 `dashboard.html`。`dashboard_inline.html` 为自含数据的单文件版，适合预览/分享。
+
+> **提示词的两种模式**：HTTP（`serve.py`）下「消耗明细」表的**提示词列实时可见**（来自接口响应，仅存在于内存）；`file://` 静态版该列显示「—」，因为 `render` 落盘前会**强制剥离**提示词 —— 这是刻意的隐私设计，提示词**永不落盘**。
+
+工作台顶部「数据源」徽章区实时展示四条数据链路的健康状态（消耗明细 / 包生命周期 / 逐包采样 / 签到），三态标示 `正常` / `降级` / `缺失` / `无基准`；「消耗明细」面板顶部还有一条**对账提示**，比对「服务端请求级流水」与「逐包采样存档」两个口径，一致时显示差异百分比。任一接口变动会立即在徽章上显形，不会静默失真。
 
 图表库 `assets/echarts.min.js` 已离线内置，无需联网。
 
@@ -120,6 +132,7 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 - `accessToken` 等同于登录密码：严禁打印明文、提交到代码仓库、贴群、写进公开文章。
 - 脚本默认只输出脱敏摘要；快照数据仅存本机 `~/.workbuddy/workbuddy-credits-data/`。
+- **提示词永不落盘**：请求级消耗明细中的 `input` / `inputTrunc` 字段只存在于接口响应的内存中，供工作台实时展示；`render` 与 `serve.py` 的静态通道都会在写入前强制剥离该字段（`strip_prompts` 硬约束）。落盘数据只保留 `requestId` / 时间 / 积分 / 模型 / 客户端 / 用途。
 
 ## 签到与提醒机制
 
@@ -142,7 +155,7 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 ## 资源
 
-- `scripts/workbuddy_credits.py` —— 核心脚本（查询/签到/快照/分析/渲染/账本自积累）
+- `scripts/workbuddy_credits.py` —— 核心脚本（查询/签到/快照/分析/渲染/账本自积累/请求流水 L5/包生命周期 L6/对账）
 - `scripts/serve.py` —— 本地可刷新工作台服务
 - `scripts/launcher.py` —— 通用启动器（独立进程常驻 + 生成双击启动器 VBS）
 - `scripts/shortcut.py` —— 创建 .lnk 快捷方式到桌面/开始菜单（零依赖，subprocess 调 PowerShell）
@@ -151,5 +164,15 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 - `dashboard.html` + `dashboard_data.js` —— 可视化工作台（静态版）
 - `dashboard_inline.html` —— 自含数据的单文件工作台（预览/分享用）
 - `assets/echarts.min.js` —— 离线图表库
-- `references/api.md` —— 接口端点、请求头、响应字段与分类逻辑说明
+- `references/api.md` —— 接口端点、请求头、响应字段、分层口径与关键坑说明
 - `references/checkin.md` —— 签到机制与自动化说明（为何不用定时任务、可选替代方案）
+
+## 本地数据文件（`~/.workbuddy/workbuddy-credits-data/`）
+
+| 文件 | 用途 | 可回补 |
+|------|------|--------|
+| `snapshots.jsonl` | 余额快照（L3） | ✅ |
+| `usage_history.json` | 逐包余量采样（L2，含 `status`/`cycle_end`） | ❌ 余量衰减轨迹不可回补 |
+| `income_events.json` | 到账/签到事件（用于对账归因） | ✅ |
+| `checkin_history.json` | 签到记录（L4） | ✅ |
+| `requests_history.jsonl` | **请求级消耗流水存档（L5，按 `requestId` upsert）** | 消耗可回补；**提示词不可** |

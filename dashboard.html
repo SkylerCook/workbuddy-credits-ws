@@ -208,6 +208,61 @@
   .expiry-modal .expiry-row .val.red { color: var(--red); }
   .expiry-modal .expiry-actions { display: flex; gap: 10px; justify-content: flex-end; }
   .expiry-modal .expiry-actions .btn { font-size: 13px; }
+
+  /* ---------- 数据源健康徽章 ---------- */
+  .health-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .health-bar .hb-title { font-size: 12px; color: var(--muted); margin-right: 2px; }
+  .hb {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+    padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border);
+    background: #fff; color: var(--text); cursor: default; white-space: nowrap;
+  }
+  .hb .dot-i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
+  .hb .hb-k { color: var(--muted); }
+  .hb .hb-v { font-weight: 600; }
+  .hb.ok .dot-i { background: var(--green); }
+  .hb.ok .hb-v { color: var(--green); }
+  .hb.degraded .dot-i { background: var(--amber); }
+  .hb.degraded .hb-v { color: var(--amber); }
+  .hb.missing .dot-i { background: var(--red); }
+  .hb.missing .hb-v { color: var(--red); }
+  .hb.no_baseline .dot-i { background: #94a3b8; }
+  .hb.no_baseline .hb-v { color: #64748b; }
+
+  /* ---------- 轻量页签 ---------- */
+  .tabs { display: inline-flex; background: #f1f5f9; border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .tabs button {
+    border: none; background: transparent; cursor: pointer; font-size: 12.5px;
+    padding: 5px 14px; border-radius: 6px; color: var(--text); font-family: inherit;
+  }
+  .tabs button.active { background: var(--primary); color: #fff; font-weight: 600; }
+  .tabs button:not(.active):hover { color: var(--primary); }
+
+  /* ---------- 构成条（模型 / 客户端占比） ---------- */
+  .bk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 26px; }
+  .bk-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; font-size: 12.5px; }
+  .bk-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bk-val { color: var(--title); font-weight: 600; }
+  .bk-track { grid-column: 1 / -1; height: 6px; border-radius: 4px; background: #eef2f7; overflow: hidden; }
+  .bk-fill { height: 100%; border-radius: 4px; background: var(--primary); }
+  .bk-sub { font-size: 11px; color: var(--muted); }
+
+  /* ---------- 对账提示条 ---------- */
+  .rc-bar {
+    display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.65;
+    padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; border: 1px solid var(--border);
+    background: #f8fafc; color: var(--text);
+  }
+  .rc-bar.ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .rc-bar.no_baseline { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
+  .rc-bar.degraded { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+  .rc-bar.missing { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  .rc-bar .rc-t { font-weight: 600; margin-right: 2px; }
+  .prompt-cell { max-width: 380px; }
+  .prompt-text {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; font-size: 12.5px; color: var(--text); line-height: 1.5;
+  }
 </style>
 </head>
 <body data-page-node-id="5o6Cghl1HZr0pBEhr9ABQ3">
@@ -256,7 +311,9 @@
     <a href="#sec-overview" class="active" data-page-node-id="p7gxg5Lr44P0rkPFUjLGZq">数据概览</a>
     <a href="#sec-charts" data-page-node-id="FrmOVAXaRRXeW4GyJnQokS">消耗分析</a>
     <a href="#sec-ledger" data-page-node-id="rWa7M9C8rx1KuF5EBZzAGE">收支账本</a>
+    <a href="#sec-requests" data-page-node-id="Vq0YWzH2Kr8ibTgSxNvP1m">消耗明细</a>
     <a href="#sec-sessions" data-page-node-id="mi9gFJqVd2mHejEjfj1SVE">会话消耗</a>
+    <a href="#sec-lifecycle" data-page-node-id="Rt5mLcX9Uw3oQdJaBk7EzK">包生命周期</a>
     <a href="#sec-batch" data-page-node-id="Ndzp1BEHyAOjMc3S1jbQNF">积分批次</a>
   </div>
 </div>
@@ -264,6 +321,9 @@
 <div class="container" data-page-node-id="PO0ILgSH1nLKyiXQRpiXJZ">
   <!-- 使用摘要 -->
   <div class="summary-bar" id="summary-bar" style="display:none" data-page-node-id="sBD7ma0FkSQfuvsKg019IP"></div>
+
+  <!-- 数据源健康（三态徽章：正常 / 降级 / 缺失 / 无基准） -->
+  <div class="health-bar" id="health-bar" style="display:none" data-page-node-id="Hl7vT2mQpC4bWdYsRu9AeN"></div>
 
   <!-- 核心指标卡 -->
   <section class="cards" id="sec-overview" data-page-node-id="yZQT5a33W50GDUzYK68ris"></section>
@@ -304,6 +364,28 @@
     <div class="pager" id="ledger-pager" data-page-node-id="4zBh9miDg1S3pHtrBq9NJ6"></div>
   </div>
 
+  <!-- 消耗明细（请求级，服务端权威流水；口径 A） -->
+  <div class="panel" id="sec-requests" data-page-node-id="Ws3nKpL8Qv2mXeRtYb6UjH">
+    <div class="panel-head" data-page-node-id="Cf9pJzW4Tn6dLhVqMx2BoE">
+      <h2 data-icon="bolt" data-page-node-id="Zq7kMvU2Ys9dRfNbGw4TpL">消耗明细（请求级）</h2>
+      <div class="filters" data-page-node-id="Yh2wNcK9Lp4mVeQsXj7BdR">
+        <input type="text" class="search-input" id="req-search" placeholder="搜索模型 / 客户端 / 会话 / 提示词" data-page-node-id="Ux5bTnQ3Mv8kLdWsZo1YfG">
+        <label class="bk-sub" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;" data-page-node-id="Pb4vRmN7Kq2sXdLtEw8YjC">
+          <input type="checkbox" id="req-only-prompt" data-page-node-id="Nc6mYhB2Vt5rLpQxWd3ZkS"> 仅看今日实时提示词
+        </label>
+        <button class="btn" id="export-requests" style="padding:5px 12px;font-size:12.5px;" data-page-node-id="Jd9fWqZ4Rm6tYvNbLk2XpS">导出</button>
+      </div>
+    </div>
+    <div class="rc-bar" id="rc-bar" style="display:none" data-page-node-id="Am3vKdT8Xs5nQpLwRb7YcE"></div>
+    <div class="bk-grid" id="req-breakdown" style="margin-bottom:18px" data-page-node-id="Fy4tNqW9Ld2mXvKsPz6RjB"></div>
+    <table data-page-node-id="Gv8pLmQ3Xt7nWdKsYb2RfN">
+      <thead data-page-node-id="Hk5rZcV9Mn3sLdQwTp8YbX"><tr data-page-node-id="Iw7tBnL4Qp9mXdKsVz3RcY"><th data-page-node-id="Ls2vKpN8Wt4mQdXzRb6YfH">时间</th><th data-page-node-id="Mt9wQrL5Vn2kXdZsPb7YcJ">模型</th><th data-page-node-id="Nu4xBsK6Wp3mQdLzRt8YcV">客户端</th><th data-page-node-id="Ov1yCtL7Xq4nReMzSu9ZdW">用途</th><th data-page-node-id="Pw6zDuM8Yr5oQeNaTv2AeX">提示词</th><th data-page-node-id="Qx3aEvN9Zs6pRfObUw4BfY">积分</th></tr></thead>
+      <tbody id="req-tbody" data-page-node-id="Ry8bFwP1At7qSgPcVx5CgZ"></tbody>
+    </table>
+    <div class="pager" id="req-pager" data-page-node-id="Sz9cGxQ2Bu8rThQdWy6DhA"></div>
+    <div class="hint" data-page-node-id="Ta1dHyR3Cv9sUiReXz7EiB">注：本表为服务端权威流水（口径 A），与「会话消耗」的本地库口径相互独立、可用于对账。提示词为**运行时实时展示**，来自当前会话的接口响应；通过 <code>file://</code> 打开（读取静态 dashboard_data.js）时该列留空 —— 这是刻意的隐私设计，提示词永不落盘。</div>
+  </div>
+
   <!-- 最近会话消耗 -->
   <div class="panel" id="sec-sessions" data-page-node-id="VvGvsE4tRyTa1CbOzjGCtw">
     <div class="panel-head" data-page-node-id="MPueSB2m9d1lzgHHO2FbAc"><h2 data-icon="chat" data-page-node-id="o9E5SDODHuabSdop9WjEni">最近会话消耗</h2></div>
@@ -312,6 +394,28 @@
       <tbody id="session-tbody" data-page-node-id="ajogW8Ui7waKAGajqgvNFX"></tbody>
     </table>
     <div class="pager" id="session-pager" data-page-node-id="fGQThlAfn2c25U3VEzPwKN"></div>
+  </div>
+
+  <!-- 包生命周期（有效期内 / 已过期，来自包明细接口；口径 B 权威） -->
+  <div class="panel" id="sec-lifecycle" data-page-node-id="Ub2eIyS4Dw1tViQfAa8GjC">
+    <div class="panel-head" data-page-node-id="Vc3fJzT5Ex2uWjRgBb9HkD">
+      <h2 data-icon="list" data-page-node-id="Wd4gKaU6Fy3vXkShCc1IlE">包生命周期</h2>
+      <div class="tabs" id="lc-tabs" data-page-node-id="Xe5hLbV7Gz4wYlTiDd2JmF">
+        <button data-lc="valid" class="active" data-page-node-id="Yf6iMcW8Ha5xZmUjEe3KnG">有效期内</button>
+        <button data-lc="expired" data-page-node-id="Zg7jNdX9Ib6yAnVkFf4LoH">已过期</button>
+      </div>
+    </div>
+    <div class="cards" id="lc-cards" style="margin-bottom:16px" data-page-node-id="Ah8kOeY1Jc7zBoWlGg5MpI"></div>
+    <div class="filters" style="margin-bottom:14px" data-page-node-id="Bi9lPfZ2Kd8aCpXmHh6NqJ">
+      <input type="text" class="search-input" id="lc-search" placeholder="搜索资源包 / 类型" data-page-node-id="Cj1mQgA3Le9bDqYnIi7OrK">
+      <button class="btn" id="export-lifecycle" style="padding:6px 12px;font-size:12.5px;" data-page-node-id="Dk2nRhB4Mf1cErZoJj8PsL">导出当前页签</button>
+    </div>
+    <table data-page-node-id="El3oSciC5Ng2dFsApKk9QtM">
+      <thead data-page-node-id="Fm4pIdD6Oh3eGtBqLl0RuN"><tr data-page-node-id="Gn5qJeE7Pi4fHuCrMm1SvO"><th data-page-node-id="Ho6rKfF8Qj5gIvDsNn2TwP">到期时间</th><th data-page-node-id="Ip7sLgG9Rk6hJwEtOo3UxQ">状态</th><th data-page-node-id="Jq8tMhH1Sl7iKxFuPp4VyR">剩余</th><th data-page-node-id="Kr9uNiI2Tm8jLyGvQq5WzS">已用/总量</th><th data-page-node-id="Ls1vOjJ3Un9kMzHwRr6XaT">类型</th><th data-page-node-id="Mt2wPkK4Vo1lNaIxSs7YbU">浪费</th></tr></thead>
+      <tbody id="lc-tbody" data-page-node-id="Nu3xQlL5Wp2mObJyTt8ZcV"></tbody>
+    </table>
+    <div class="pager" id="lc-pager" data-page-node-id="Ov4yRmM6Xq3nPcKzUu9AdW"></div>
+    <div class="hint" id="lc-hint" data-page-node-id="Pw5zSnN7Yr4oQdLaVv1BeX"></div>
   </div>
 
   <!-- 收支损失统计 -->
@@ -623,6 +727,9 @@
     if (D.summary) { sb.innerHTML = '<span class="ph-icon" style="color:var(--primary); vertical-align:middle; margin-right:4px;">' + ICONS.info + '</span><span class="dot">◆</span>' + D.summary; sb.style.display = 'block'; }
     else { sb.style.display = 'none'; }
 
+    // 数据源健康徽章（三态）
+    renderHealth(D);
+
     // 指标卡
     const w = D.waste || {};
     // 登录态有效期（accessToken）：提示何时需要打开一次 WorkBuddy 续期
@@ -640,11 +747,13 @@
     }
     const cards = [
       { cls: '', icon: 'wallet', label: '可用积分', value: (D.total_remain || 0).toFixed(2), sub: '可用包 ' + (D.avail_count || 0) + ' 个' },
-      { cls: '', icon: 'bolt', label: '今日已使用', value: D.today_used != null ? D.today_used.toFixed(2) : '—', sub: '刷新即实时统计' },
+      { cls: '', icon: 'bolt', label: '今日已使用', value: D.today_used != null ? D.today_used.toFixed(2) : '—',
+        sub: (D.usage_source === 'L5' ? '服务端流水口径' : '逐包采样口径') + (D.today_used_l5 != null && D.today_used_l2 != null && Math.abs(D.today_used_l5 - D.today_used_l2) > 0.05 ? ' · 采样 ' + D.today_used_l2.toFixed(2) : '') },
       { cls: '', icon: 'clock', label: '预计可用天数', value: D.days_left != null ? D.days_left + ' 天' : '—', sub: '近7天日均 ' + (D.daily_avg || 0).toFixed(1) + ' 积分' },
       { cls: '', icon: 'chart', label: '累计消耗', value: (D.total_used || 0).toFixed(2), sub: '云端有效批次累计已用（逐包口径）' },
       { cls: 'amber', icon: 'alert', label: '即将到期（7天内）', value: w.at_risk_count || 0, sub: '涉及 ' + (w.at_risk || 0).toFixed(2) + ' 积分' },
-      { cls: 'red', icon: 'loss', label: '已过期损失', value: (w.wasted || 0).toFixed(2), sub: '已过期未用完 ' + (w.wasted_count || 0) + ' 批' },
+      { cls: 'red', icon: 'loss', label: '已过期损失', value: ((D.waste_authoritative && D.waste_authoritative.wasted_total) || w.wasted || 0).toFixed(2),
+        sub: '已过期未用完 ' + ((D.waste_authoritative && D.waste_authoritative.wasted_count) || w.wasted_count || 0) + ' 批' + (D.waste_authoritative ? ' · 服务端权威' : '') },
       { cls: 'green', icon: 'cal', label: '今日签到', value: (D.checkin && D.checkin.today_checked_in) ? '已签到' : '未签到', sub: '连续 ' + (D.checkin ? D.checkin.streak_days : 0) + ' 天 · 每日 +' + (D.checkin ? D.checkin.daily_credit : 0) },
       authCard,
       // 用户信息（来自 account：nickname / type）
@@ -777,6 +886,172 @@
 
     // 积分批次（搜索 + 状态筛选 + 分页）
     renderBatch();
+    // 消耗明细（请求级，口径 A）
+    renderRequests(D);
+    // 包生命周期（有效期内 / 已过期）
+    renderLifecycle(D);
+  }
+
+  // ---------- 数据源健康徽章 ----------
+  const HEALTH_ORDER = ['l5', 'l6', 'l2', 'l4'];
+  const HEALTH_SRC_NAME = { l5: '消耗明细', l6: '包生命周期', l2: '逐包采样', l4: '签到' };
+  function renderHealth(D) {
+    const bar = document.getElementById('health-bar');
+    const h = D.sources_health || {};
+    const keys = HEALTH_ORDER.filter(function (k) { return h[k]; });
+    if (keys.length === 0) { bar.style.display = 'none'; return; }
+    bar.innerHTML = '<span class="hb-title">数据源</span>' + keys.map(function (k) {
+      const s = h[k];
+      const cls = s.status === 'ok' ? 'ok' : (s.status === 'degraded' ? 'degraded' : (s.status === 'missing' ? 'missing' : 'no_baseline'));
+      return '<span class="hb ' + cls + '" title="' + (s.detail || '') + '"><span class="dot-i"></span>' +
+             '<span class="hb-k">' + (HEALTH_SRC_NAME[k] || k) + '</span>' +
+             '<span class="hb-v">' + (s.label || '-') + '</span></span>';
+    }).join('');
+    bar.style.display = 'flex';
+  }
+
+  // ---------- 消耗明细（请求级，口径 A） ----------
+  const reqState = { data: [], filter: '' };
+  function renderRequests(D) {
+    const { rows, meta } = buildRequests(D);
+    reqState.data = rows;
+
+    // 口径来源提示 + 对账条
+    const rc = D.reconcile || {};
+    const rcBar = document.getElementById('rc-bar');
+    const rcCls = rc.status === 'ok' ? 'ok' : (rc.status === 'no_baseline' ? 'no_baseline' : (rc.status === 'low_precision' ? 'degraded' : 'missing'));
+    const rcTitle = rc.status === 'ok' ? '口径对账一致' : (rc.status === 'no_baseline' ? '暂无对账基准' : (rc.status === 'low_precision' ? '对账精度不足' : '对账异常'));
+    let rcBody = rc.reason || '';
+    if (rc.status === 'ok') {
+      rcBody = '窗口 ' + (rc.window_start || '') + ' ~ ' + (rc.window_end || '') + '：口径 A 合计 ' + (rc.l5_total || 0).toFixed(2) +
+               ' 积分，逐包采样合计 ' + (rc.l2_total || 0).toFixed(2) + ' 积分，差异 ' + (rc.diff || 0).toFixed(2) +
+               '（' + (rc.diff_pct != null ? rc.diff_pct.toFixed(2) : '-') + '%）';
+    } else if (rc.status === 'low_precision' && rc.reason) {
+      rcBody = rc.reason;
+    }
+    const artifacts = rc.income_artifacts || [];
+    if (artifacts.length) {
+      rcBody += ' 已确证 ' + artifacts.length + ' 个「首次出现即为满额」的新到账包，其增量不计入差异。';
+    }
+    if (rc.alerts && rc.alerts.length) {
+      rcBody += ' ⚠ ' + rc.alerts.map(function (a) { return (a.date || '') + ' 差异 ' + (a.diff != null ? a.diff.toFixed(2) : '-'); }).join('；');
+    }
+    if (rcBody) {
+      rcBar.className = 'rc-bar ' + rcCls;
+      rcBar.innerHTML = '<span class="rc-t">' + rcTitle + '：</span><span>' + rcBody + '</span>';
+      rcBar.style.display = 'flex';
+    } else { rcBar.style.display = 'none'; }
+
+    // 构成（模型 / 客户端 / 用途）
+    const mb = D.model_breakdown || [], cb = D.client_breakdown || [], pb = D.purpose_breakdown || [];
+    document.getElementById('req-breakdown').innerHTML = [
+      { title: '按模型', list: mb }, { title: '按客户端', list: cb }, { title: '按用途', list: pb },
+    ].map(function (g) {
+      if (!g.list.length) return '<div><div class="bk-sub" style="font-weight:600;color:var(--title);margin-bottom:8px">' + g.title + '</div><div class="bk-sub">暂无数据</div></div>';
+      const max = g.list[0].credit || 1;
+      return '<div><div class="bk-sub" style="font-weight:600;color:var(--title);margin-bottom:8px">' + g.title + '</div>' +
+        g.list.slice(0, 5).map(function (x) {
+          return '<div class="bk-row"><span class="bk-name" title="' + (x.name || '') + '">' + (x.name || '-') + '</span>' +
+                 '<span class="bk-val">' + x.credit.toFixed(2) + '<span class="bk-sub"> · ' + x.count + ' 次</span></span>' +
+                 '<span class="bk-track"><span class="bk-fill" style="width:' + Math.max(2, (x.credit / max) * 100).toFixed(1) + '%"></span></span></div>';
+        }).join('') + '</div>';
+    }).join('');
+
+    renderReqTable();
+  }
+
+  // 请求行：合并本地库口径（会话标题）与服务端口径
+  function buildRequests(D) {
+    const rows = (D.requests || []).slice();
+    const meta = D.requests_meta || {};
+    // 无 input 的历史行标记为非实时
+    rows.forEach(function (r) { if (!r.has_input) r.input = r.input || ''; });
+    return { rows: rows, meta: meta };
+  }
+
+  function reqFilterFn(r) {
+    const q = (reqState.filter || '').toLowerCase();
+    if (!q) return true;
+    return ((r.model || '') + ' ' + (r.client || '') + ' ' + (r.agent_purpose || '') + ' ' + (r.session_title || '')).toLowerCase().includes(q);
+  }
+
+  function renderReqTable() {
+    const all = reqState.data.filter(reqFilterFn);
+    setupPager('req-pager', all.length, 15, function (page) {
+      const start = (page - 1) * 15;
+      document.getElementById('req-tbody').innerHTML = all.slice(start, start + 15).map(function (r) {
+        const prompt = r.has_input
+          ? '<div class="prompt-text" title="' + (r.input || '').replace(/"/g, '&quot;') + '">' + (r.input || '') + '</div>'
+          : '<span class="bk-sub">—（历史记录，服务端仅保留约 32 天）</span>';
+        return '<tr><td class="num">' + (r.time || '-') + '</td>' +
+               '<td>' + (r.model || '-') + '</td>' +
+               '<td>' + (r.client || '-') + '</td>' +
+               '<td>' + (r.agent_purpose || '-') + '</td>' +
+               '<td class="prompt-cell">' + prompt + '</td>' +
+               '<td class="num">' + (r.credit != null ? r.credit.toFixed(2) : '-') + '</td></tr>';
+      }).join('') || '<tr><td colspan="6" class="empty">暂无请求级流水（服务端接口不可用或窗口内无记录）</td></tr>';
+    });
+  }
+
+  // ---------- 包生命周期 ----------
+  const lcState = { kind: 'valid', filter: '' };
+  const LC_STATUS_TAG = { 0: 'ok', 3: 'used', 2: 'bad', 1: 'bad' };
+  function renderLifecycle(D) {
+    const lc = D.packages_lifecycle || {};
+    const valid = lc.valid || [], expired = lc.expired || [];
+    const wa = D.waste_authoritative || {};
+
+    // 概览卡随页签切换
+    function cards(kind) {
+      if (kind === 'valid') {
+        const remain = valid.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
+        const used = valid.reduce(function (s, p) { return s + (p.used || 0); }, 0);
+        return [
+          { cls: '', icon: 'wallet', k: '有效期内批次', v: valid.length + ' 个', d: '含「已用完」的到期前批次' },
+          { cls: 'green', icon: 'bolt', k: '可用余额', v: remain.toFixed(2) + ' 积分', d: '有效批次剩余合计' },
+          { cls: '', icon: 'chart', k: '已消耗', v: used.toFixed(2) + ' 积分', d: '有效批次累计已用' },
+        ];
+      }
+      const byMonth = wa.by_month || {};
+      const months = Object.keys(byMonth).sort();
+      return [
+        { cls: 'red', icon: 'loss', k: '实际浪费', v: (wa.wasted_total || 0).toFixed(2) + ' 积分', d: (wa.wasted_count || 0) + ' 个包到期未用完' },
+        { cls: 'amber', icon: 'alert', k: '从未使用', v: (wa.never_used_total || 0).toFixed(2) + ' 积分', d: (wa.never_used_count || 0) + ' 个包一分未动' },
+        { cls: '', icon: 'list', k: '过期批次', v: (wa.expired_count || expired.length) + ' 个', d: months.length ? ('跨度 ' + months[0] + ' ~ ' + months[months.length - 1]) : '—' },
+      ];
+    }
+    document.getElementById('lc-cards').innerHTML = cards(lcState.kind).map(function (c) {
+      return '<div class="card ' + c.cls + '"><div class="card-head">' + ic(c.icon) + '<span>' + c.k + '</span></div>' +
+             '<div class="value" style="font-size:20px">' + c.v + '</div><div class="sub">' + c.d + '</div></div>';
+    }).join('');
+
+    const list = lcState.kind === 'valid' ? valid : expired;
+    const q = (lcState.filter || '').toLowerCase();
+    const filtered = list.filter(function (p) {
+      return !q || (p.name || '').toLowerCase().includes(q) || (p.package_code || '').toLowerCase().includes(q);
+    });
+    setupPager('lc-pager', filtered.length, 15, function (page) {
+      const start = (page - 1) * 15;
+      document.getElementById('lc-tbody').innerHTML = filtered.slice(start, start + 15).map(function (p) {
+        const tag = LC_STATUS_TAG[p.status] || 'used';
+        const waste = p.wasted > 0 ? '<span class="neg">-' + p.wasted.toFixed(2) + '</span>' : '<span class="bk-sub">—</span>';
+        return '<tr><td class="num">' + (p.cycle_end || '-') + '</td>' +
+               '<td><span class="tag ' + tag + '">' + (p.status_label || '-') + '</span></td>' +
+               '<td class="num">' + (p.remain || 0).toFixed(2) + '</td>' +
+               '<td class="num">' + (p.used || 0).toFixed(2) + '/' + (p.size || 0).toFixed(2) + '</td>' +
+               '<td>' + (p.name || '-') + '</td>' +
+               '<td class="num">' + waste + '</td></tr>';
+      }).join('') || '<tr><td colspan="6" class="empty">' + (list.length ? '无匹配批次' : '暂无数据（包明细接口不可用）') + '</td></tr>';
+    });
+
+    const hint = document.getElementById('lc-hint');
+    if (lcState.kind === 'valid') {
+      hint.textContent = '注：数据来自服务端包明细接口（权威口径），含「有效期内」全部批次 —— 状态 0=有效、3=到期前已用完。与「积分批次」面板同源但更完整（含 expire_time / 精确余量）。';
+    } else {
+      const byMonth = wa.by_month || {};
+      const parts = Object.keys(byMonth).sort().map(function (m) { return m + ' ' + byMonth[m].toFixed(0); });
+      hint.textContent = '注：已过期批次按到期时间倒序，浪费 = 到期时未用完的剩余积分。按到期月分布：' + (parts.length ? parts.join(' · ') : '—') + '。此前该口径由本地推算得出，现由服务端直出，无需再依赖快照差分。';
+    }
   }
 
   const statusCls = { '可用': 'ok', '已过期': 'bad', '已用完': 'used' };
@@ -800,17 +1075,29 @@
 
   // ---------- 交互 ----------
   // file:// 协议下 fetch 不可用，改用 script 标签加载同目录的 dashboard_data.js
+  // HTTP 协议下优先走 /api/data（实时、含运行时提示词）；仅在失败时回退到静态 script
+  function loadViaScriptTag() {
+    return new Promise(function (resolve, reject) {
+      const s = document.createElement('script');
+      s.src = 'dashboard_data.js?t=' + Date.now();
+      s.onload = function () { resolve(window.CREDITS_DATA || {}); };
+      s.onerror = function () { reject(new Error('无法读取 dashboard_data.js，请先运行 render 生成数据')); };
+      document.head.appendChild(s);
+    });
+  }
   function loadData() {
-    if (location.protocol === 'file:') {
-      return new Promise(function (resolve, reject) {
-        const s = document.createElement('script');
-        s.src = 'dashboard_data.js?t=' + Date.now();
-        s.onload = function () { resolve(window.CREDITS_DATA || {}); };
-        s.onerror = function () { reject(new Error('无法读取 dashboard_data.js，请先运行 render 生成数据')); };
-        document.head.appendChild(s);
-      });
-    }
-    return fetch('/api/data', { cache: 'no-store' }).then(function (r) { return r.json(); });
+    if (location.protocol === 'file:') return loadViaScriptTag();
+    // HTTP：先试实时接口（含提示词）；失败再退静态文件（无提示词），保证页面不空
+    return fetch('/api/data', { cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        if (d && d.error) throw new Error(d.error);
+        return d;
+      })
+      .catch(function () { return loadViaScriptTag(); });
   }
 
   // 统一的数据刷新：重新拉取并渲染。viaBtn=true 时在「刷新数据」按钮上给出可见反馈
@@ -847,6 +1134,42 @@
 
   document.getElementById('batch-search').addEventListener('input', renderBatch);
   document.getElementById('batch-status').addEventListener('change', renderBatch);
+
+  // 消耗明细：搜索 / 导出
+  document.getElementById('req-search').addEventListener('input', function () {
+    reqState.filter = this.value || '';
+    renderReqTable();
+  });
+  document.getElementById('export-requests').addEventListener('click', function () {
+    if (!DATA) return;
+    const rows = reqState.data.filter(reqFilterFn).map(function (r) {
+      return [r.time || '', r.model || '', r.client || '', r.agent_purpose || '', r.has_input ? (r.input || '') : '', r.credit != null ? r.credit.toFixed(2) : ''];
+    });
+    exportCSV('消耗明细_请求级.csv', ['时间', '模型', '客户端', '用途', '提示词', '积分'], rows);
+  });
+
+  // 包生命周期：页签 / 搜索 / 导出
+  document.getElementById('lc-tabs').addEventListener('click', function (e) {
+    const btn = e.target.closest('button[data-lc]'); if (!btn) return;
+    this.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    lcState.kind = btn.getAttribute('data-lc');
+    if (DATA) renderLifecycle(DATA);
+  });
+  document.getElementById('lc-search').addEventListener('input', function () {
+    lcState.filter = this.value || '';
+    if (DATA) renderLifecycle(DATA);
+  });
+  document.getElementById('export-lifecycle').addEventListener('click', function () {
+    if (!DATA) return;
+    const lc = DATA.packages_lifecycle || {};
+    const list = lcState.kind === 'valid' ? (lc.valid || []) : (lc.expired || []);
+    const rows = list.map(function (p) {
+      return [p.cycle_end || '', p.status_label || '', (p.remain || 0).toFixed(2), (p.used || 0).toFixed(2), (p.size || 0).toFixed(2), p.name || '', (p.wasted || 0).toFixed(2)];
+    });
+    exportCSV('包生命周期_' + (lcState.kind === 'valid' ? '有效期内' : '已过期') + '.csv',
+      ['到期时间', '状态', '剩余', '已用', '总量', '类型', '浪费'], rows);
+  });
 
   document.getElementById('export-batch').addEventListener('click', function () {
     if (!DATA) return;
@@ -957,8 +1280,10 @@
     'sec-charts': '消耗分析',
     'sec-heat': '消耗分析',
     'sec-ledger': '收支账本',
+    'sec-requests': '消耗明细',
     'sec-sessions': '会话消耗',
     'sec-waste': '收支账本',
+    'sec-lifecycle': '包生命周期',
     'sec-batch': '积分批次',
   };
   function updateActiveNav() {
@@ -1006,10 +1331,14 @@
   });
 
   // 初始渲染
-  if (DATA) { renderAll(DATA); }
-  else {
+  // HTTP 模式：static <script> 已先加载（可能为剥离版），仍需拉一次实时接口取回提示词
+  // file:// 模式：只能用静态数据，直接渲染
+  if (DATA && location.protocol === 'file:') {
+    renderAll(DATA);
+  } else {
     document.getElementById('summary-bar').textContent = '正在加载…';
-    document.getElementById('refresh-btn').click();
+    document.getElementById('summary-bar').style.display = 'block';
+    refreshData(false);
   }
 })();
 </script>
