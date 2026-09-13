@@ -45,6 +45,7 @@ import time
 import sqlite3
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime, timedelta, date
 
 # ---------- 接口配置 ----------
@@ -159,6 +160,54 @@ def load_login():
 
 
 # ---------- 通用 API 调用 ----------
+_OPENER = None
+
+
+def _direct_opener():
+    """返回显式直连的 opener：不挂任何代理，忽略系统与环境代理解析。
+
+    为什么必须显式传空代理表（不能用裸 urlopen）：CPython 的 urllib 把
+    「进程首次请求时的代理配置」冻结在模块级全局 opener 里
+    （urllib/request.py 的 _opener，build_opener 每进程只执行一次；
+    ProxyHandler.__init__ 在构造那一刻就调用 getproxies() 并固化结果）。
+    于是常驻进程一旦在代理开启时发过请求，之后代理软件退出、端口关闭，
+    它仍会向那个死端口发 CONNECT，报 WinError 10061 且**永不自愈**。
+
+    本技能默认直连（与 update.py 的既定约定一致），传 ProxyHandler({})
+    会让 urllib 跳过默认的 ProxyHandler，从根上消除上述隐患。
+    """
+    global _OPENER
+    if _OPENER is None:
+        _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return _OPENER
+
+
+def _friendly_net_error(e, url=""):
+    """把底层网络异常翻译成用户可操作的提示语。"""
+    msg = str(e)
+    errno = getattr(e, "errno", None)
+    if errno is None:
+        errno = getattr(getattr(e, "reason", None), "errno", None)
+    host = ""
+    try:
+        netloc = urllib.parse.urlsplit(url).netloc
+        host = netloc.split("@")[-1].split(":")[0] if netloc else ""
+    except Exception:
+        pass
+    where = ("（目标 %s）" % host) if host else ""
+    low = msg.lower()
+    if errno == 10061 or "10061" in msg:
+        return ("连接被拒绝%s：对方未接受连接。本技能默认直连、不使用代理；"
+                "若你开过代理软件，请确认它仍在运行，或稍后重试。" % where)
+    if errno == 10060 or "timed out" in low or "timeout" in low:
+        return "连接超时%s：网络不通或对方无响应，请稍后重试。" % where
+    if errno in (11001, 11004) or "getaddrinfo" in low:
+        return "域名解析失败%s：请检查网络与 DNS 设置。" % where
+    if isinstance(e, urllib.error.URLError):
+        return "网络请求失败%s：%s" % (where, msg)
+    return msg
+
+
 def _api_call(base, path, token, uid, body=None):
     url = base + path
     data = json.dumps(body).encode("utf-8") if body is not None else b"{}"
@@ -169,12 +218,12 @@ def _api_call(base, path, token, uid, body=None):
     req.add_header("X-User-Id", uid)
     req.add_header("User-Agent", "Mozilla/5.0")  # 关键：缺此头返回 403
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _direct_opener().open(req, timeout=30) as r:
             raw = r.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", "replace")
     except Exception as e:
-        return None, str(e)
+        return None, _friendly_net_error(e, url)
     try:
         data = json.loads(raw)
     except Exception:

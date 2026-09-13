@@ -130,6 +130,31 @@ User-Agent: Mozilla/5.0        ← 关键：缺此头部分接口返回 403 code
 3. **必须带 `User-Agent: Mozilla/5.0`**：Python urllib 默认 UA 会被网关拒（403）。
 4. 历史教程里的 `copilot.tencent.com` 签到接口已失效（404），签到以 `www.codebuddy.cn` 为准。
 
+## 网络与代理（默认直连）
+
+**所有接口调用一律显式直连，完全不读取系统代理与环境变量代理。** 实现方式：`_api_call` 用
+一个显式空代理表的 opener（`build_opener(ProxyHandler({}))`），而非裸
+`urllib.request.urlopen`。`update.py`（GitHub 通道）遵循同一约定，代理只能通过 `--proxy`
+显式开启。
+
+**为什么不能用裸 urlopen？** CPython 的 urllib 会把「进程首次请求时的代理配置」**冻结**在
+模块级全局 opener 里：
+
+- `urllib/request.py` 的 `_opener = None`（模块级变量）
+- `elif _opener is None: _opener = build_opener()` —— **每进程只构建一次**
+- `ProxyHandler.__init__` 内 `proxies = getproxies()` —— 构造那一刻即固化
+
+后果：常驻的 `serve.py` 若在代理软件开着的时候启动，此后代理软件退出、端口关闭，它**仍会**
+向那个死端口发 `CONNECT`，报 `WinError 10061（连接被拒绝）`，且**永不自愈**（只能重启进程）。
+用户侧的典型症状是「开着代理就正常、不开就一直报错」——端口复活后，被缓存的代理又生效了。
+
+顺带两点实测经验（2026-09-13）：
+
+- **确证手段**：在代理端口上临时放一个监听器，驱动工作台刷新，可直接抓到该进程发来的
+  `CONNECT copilot.tencent.com:443 HTTP/1.1`，即证明它仍在使用已关闭的代理。
+- **测网络要出沙箱**：沙箱/容器内可能存在透明代理并接管流量，使「直连」看起来成功，据此
+  判断会得出错误结论。
+
 ## get-user-resource 响应结构
 
 ```json

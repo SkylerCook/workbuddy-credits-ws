@@ -45,7 +45,7 @@ python scripts/update.py --check   # 只检查是否有更新，不改动任何�
 4. **若工作台服务正在运行 → 停掉旧进程并重启**。服务是 DETACHED 常驻进程，不重启不会加载新代码（这是必须的一步）。
 5. 重启前会校验监听进程确为 python，避免误杀其它占用 8090 的程序。
 
-网络不通时加 `--proxy <地址>`（默认直连 GitHub）；GitHub API 限流时加 `--token <token>`（或设 `GITHUB_TOKEN`）。用户数据在 `~/.workbuddy/workbuddy-credits-data/`（skill 目录**外**），更新不影响。
+**所有接口访问一律默认直连**，不读取系统/环境代理：积分接口（L1–L6 + 签到）用显式空代理表的 opener，更新通道（GitHub）用 `--proxy` 显式开启。这是刻意设计——常驻的 `serve.py` 曾出现「启动时代理软件开着、之后退出」，而 CPython 的 urllib 会把**进程首次请求时的代理配置冻结在全局 opener 里**，导致此后每个请求都向已失效的代理端口发 CONNECT，报 `WinError 10061` 且**永不自愈**（除重启进程外无解）。若确需代理，请自行配置在系统层并接受上述限制。GitHub API 限流时加 `--token <token>`（或设 `GITHUB_TOKEN`）。用户数据在 `~/.workbuddy/workbuddy-credits-data/`（skill 目录**外**），更新不影响。
 
 `--force` 可在版本号相同时强制重装。发布流程（维护者）见 `README.md`「八、版本与发布」。
 
