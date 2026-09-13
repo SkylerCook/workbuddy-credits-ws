@@ -40,6 +40,7 @@ workbuddy_credits.py —— WorkBuddy 积分查询 / 签到 / 快照 / 分析工
 
 import json
 import os
+import re
 import sys
 import time
 import sqlite3
@@ -47,6 +48,26 @@ import urllib.request
 import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, date
+from concurrent.futures import ThreadPoolExecutor
+
+# ---------- 版本号 ----------
+# 权威来源是 manifest.yaml（打包 / 发布 / 工作台展示共用同一处，避免多处漂移）。
+_SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _read_version():
+    """从 manifest.yaml 读 version。只做单行解析，不引入 yaml 依赖。"""
+    try:
+        with open(os.path.join(_SKILL_DIR, "manifest.yaml"), "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("version:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return "unknown"
+
+
+VERSION = _read_version()
 
 # ---------- 接口配置 ----------
 API_BILLING_BASE = "https://copilot.tencent.com/billing/meter"
@@ -206,6 +227,30 @@ def _friendly_net_error(e, url=""):
     if isinstance(e, urllib.error.URLError):
         return "网络请求失败%s：%s" % (where, msg)
     return msg
+
+
+def _run_parallel(tasks, max_workers=8):
+    """并发执行 tasks（[(key, fn), ...]），返回 {key: (value, exception_or_None)}。
+
+    仅做编排：每个 fn 自身的返回值 / 异常原样收集。
+    设计前提是「各源相互独立」——一路抛异常只写进自己的槽位，不影响其余，
+    与 build_dashboard_data 既有的「任一源失败不连累整页」降级策略一致。
+
+    为什么值得并发：工作台首屏的耗时几乎全在网络往返（实测 4 路串行 3.84s，
+    纯 CPU 装配仅 0.03s）。并发后首屏由「各源之和」变成「最慢的一路」。
+    """
+    out = {}
+    if not tasks:
+        return out
+    workers = max(1, min(len(tasks), max_workers))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(fn): key for key, fn in tasks}
+        for fut, key in futs.items():
+            try:
+                out[key] = (fut.result(), None)
+            except Exception as e:                      # noqa: BLE001 —— 兜底收集
+                out[key] = (None, e)
+    return out
 
 
 def _api_call(base, path, token, uid, body=None):
@@ -394,29 +439,50 @@ def api_packages(token, uid, status=None, codes=None, page_size=PKG_MAX_PAGE_SIZ
     else:
         filter_body = {"Status": list(PKG_STATUS_VALID), "OnlyValidPeriod": True}
 
-    items, errors = [], []
-    for path, code_set in ((API_PKG_PAID, paid), (API_PKG_FREE, free)):
-        if not code_set:
-            continue
-        page = 1
-        total = None
+    def _fetch_side(path, code_set):
+        """抓取单一路（paid 或 free）的全部页。返回 (items, error_or_None)。
+
+        两路口径独立：各自按本路 TotalCount 收敛，绝不合并总数判定
+        （合并会把另一路多出的页算进来，翻页越界直接 HTTP 400）。
+        """
+        side_items, page, total = [], 1, None
         while True:
             body = {"PageNumber": page, "PageSize": page_size, "IsDisplayTotalInfo": True,
                     "PackageCodes": code_set}
             body.update(filter_body)
             data, err = _api_call(API_BILLING_BASE, path, token, uid, body)
             if err:
-                errors.append("%s: %s" % (path.rsplit("-", 2)[-2], err))
-                break
+                return side_items, "%s: %s" % (path.rsplit("-", 2)[-2], err)
             payload = data.get("data") or {}
             if total is None:
                 total = int(payload.get("TotalCount") or 0)
             chunk = payload.get("Accounts") or []
-            items.extend(chunk)
-            # 各路口径独立：不能合并总数判定；按本路 total 收敛，避免页码越界 400
+            side_items.extend(chunk)
             if not chunk or (total and page * page_size >= total):
                 break
             page += 1
+        return side_items, None
+
+    # paid / free 两路并发（各自独立分页）——把 2 次往返压成 1 次的时间
+    tasks = []
+    if paid:
+        tasks.append(("paid", lambda: _fetch_side(API_PKG_PAID, paid)))
+    if free:
+        tasks.append(("free", lambda: _fetch_side(API_PKG_FREE, free)))
+
+    items, errors = [], []
+    res = _run_parallel(tasks, max_workers=2)
+    for key in ("paid", "free"):            # 固定顺序拼接，保证输出稳定可复现
+        if key not in res:
+            continue
+        value, exc = res[key]
+        if exc is not None:                 # 线程层异常（理论上 _api_call 已兜住）
+            errors.append("%s: %s" % (key, exc))
+            continue
+        side_items, side_err = value
+        items.extend(side_items)
+        if side_err:
+            errors.append(side_err)
 
     if errors and not items:
         return None, None, "；".join(errors)
@@ -439,10 +505,22 @@ def api_packages_both(token, uid):
     """一次取回「有效期内」+「已过期」两份清单。返回 ({"valid":..,"expired":..}, meta, err)。
 
     任一份失败不影响另一份（失败方为空列表并在 meta 标记）。
+    两份清单并发拉取（各自内部还要分 paid/free 两路），是首屏最重的一环：
+    实测串行 2.02s → 并发后 ≈ 0.55s。
     """
+    res = _run_parallel([
+        ("valid", lambda: api_packages(token, uid, status=PKG_STATUS_VALID)),
+        ("expired", lambda: api_packages(token, uid, status=PKG_STATUS_EXPIRED)),
+    ], max_workers=2)
+
     out, metas, errs = {}, {}, []
-    for key, status in (("valid", PKG_STATUS_VALID), ("expired", PKG_STATUS_EXPIRED)):
-        items, meta, err = api_packages(token, uid, status=status)
+    for key in ("valid", "expired"):        # 固定顺序，输出稳定
+        value, exc = res.get(key, (None, None))
+        if exc is not None:
+            errs.append("%s: %s" % (key, exc))
+            out[key], metas[key] = [], {"error": str(exc)}
+            continue
+        items, meta, err = value
         out[key] = items or []
         if err:
             errs.append("%s: %s" % (key, err))
@@ -1422,7 +1500,113 @@ def cmd_usage():
     return 0
 
 
-def build_dashboard_data(token, uid, account, sync_days=None):
+def fetch_sources(token, uid, sync_days=None, hub=None, fresh=()):
+    """并发拉取四个服务端数据源，返回 {key: (payload, err)}。
+
+    hub 非空时走进程内缓存 + single-flight（常驻服务用，见 serve.py 的 SourceHub）；
+    为 None 时直接并发拉取（CLI 一次性调用）。
+
+    键与形状：
+      resource -> accounts（list）      错误为硬失败，外层据此整体返回错误
+      checkin  -> st（dict）
+      l5       -> {"rows": [...], "meta": {...}}
+      l6       -> {"lists": {...}, "meta": {...}}
+
+    fresh：需要**强制重取**的源键集合（其余走缓存）。面板级刷新靠它实现
+    ——只刷新自己那一两个源，而不是把四路全部重打。
+    """
+    want = sync_days if sync_days is not None else REQ_MAX_WINDOW_DAYS
+
+    def _resource():
+        return api_get_resource(token, uid)
+
+    def _checkin():
+        return api_checkin_status(token, uid)
+
+    def _l5():
+        rows, meta, err = sync_requests(token, uid, want)
+        return {"rows": rows, "meta": meta}, err
+
+    def _l6():
+        lists, meta, err = api_packages_both(token, uid)
+        return {"lists": lists, "meta": meta}, err
+
+    loaders = {"resource": _resource, "checkin": _checkin, "l5": _l5, "l6": _l6}
+    if hub is None:
+        tasks = list(loaders.items())
+    else:
+        tasks = [(k, (lambda kk=k, f=loaders[k]: hub.get(kk, f, fresh=(kk in fresh))))
+                 for k in loaders]
+
+    raw = _run_parallel(tasks)
+    out = {}
+    for key, (value, exc) in raw.items():
+        if exc is not None:
+            out[key] = (None, str(exc))
+        elif value is None:
+            out[key] = (None, "源未返回数据")
+        else:
+            out[key] = value
+    return out
+
+
+# ---------- 面板切片（供 serve.py 的分面板接口）----------
+# 「每个面板独立异步请求 + 局部刷新」的后端配套：每个面板只返回自己渲染需要的键，
+# 把「概览」从 248 行请求流水 + 140 行包明细里解放出来（首屏不必等大表序列化），
+# 也让每个面板能独立刷新、独立失败，而不是一处慢就整页白屏。
+_PANEL_KEYS = {
+    # 概览：账号 / KPI 卡 / 摘要 / 收支统计 / 图表 / 账本 / 会话 / 批次 / 签到 / 健康
+    "overview": (
+        "version", "generated_at", "nickname", "account_type", "auth_status",
+        "summary", "waste", "waste_authoritative",
+        "total_remain", "avail_count", "total_used", "today_used",
+        "today_used_l5", "today_used_l2", "usage_source", "days_left", "daily_avg",
+        "checkin", "usage_daily", "income_daily", "ledger", "usage_sessions",
+        "expiry_list", "sources_health",
+    ),
+    # 消耗明细：请求级大表 + 三项构成 + 对账；顺带回带 KPI 卡依赖的 L5 口径字段
+    "requests": (
+        "version", "generated_at",
+        "requests", "requests_meta",
+        "model_breakdown", "client_breakdown", "purpose_breakdown",
+        "reconcile", "usage_daily", "usage_source",
+        "today_used", "today_used_l5", "today_used_l2",
+        "sources_health",
+    ),
+    # 包生命周期：两张大表 + 权威浪费（回带「已过期损失」KPI 卡）
+    "lifecycle": (
+        "version", "generated_at",
+        "packages_lifecycle", "waste_authoritative",
+        "sources_health",
+    ),
+}
+
+# 各面板「自己拥有」的源：局部刷新时只强制重取这些源，其余沿用缓存。
+# 概览拥有 L3/L4；L5、L6 分别由消耗明细、包生命周期拥有 —— 点哪个面板刷新哪个源。
+PANEL_FRESH_KEYS = {
+    "overview": ("resource", "checkin"),
+    "requests": ("l5",),
+    "lifecycle": ("l6",),
+}
+
+
+def build_panel(panel, token, uid, account, hub=None, fresh=()):
+    """构建单个面板的 payload。返回 (data, err)。
+
+    降级语义与 build_dashboard_data 一致：某源不可用时该块为空 + 健康徽章标红，
+    其余面板照常渲染。
+    """
+    if panel not in _PANEL_KEYS:
+        return None, "未知面板：%s" % panel
+    data, err = build_dashboard_data(token, uid, account, hub=hub, fresh=fresh)
+    if err:
+        return None, err
+    out = {k: data[k] for k in _PANEL_KEYS[panel] if k in data}
+    out["panel"] = panel
+    return out, None
+
+
+def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()):
     """构建工作台数据 dict。返回 (data, err)。供 render 命令与 serve.py 复用。
 
     分层口径（2026-09-10 重构）：
@@ -1430,40 +1614,46 @@ def build_dashboard_data(token, uid, account, sync_days=None):
       观测层 L2 逐包采样 / L1 本地会话库 —— 骨架、预测、**对账基准**
       L4 签到 —— 独立
     任一新增源失败**不连累整页**：降级为该块为空 + 健康徽章标红，其余照常渲染。
+
+    性能（2026-09-13）：四源改为**并发**拉取。首屏耗时从「四路之和」（实测 3.84s）
+    降为「最慢的一路」（实测 ≈0.8s）；纯装配 CPU 仅 0.03s，不是瓶颈。
+    hub/fresh 供常驻服务复用缓存与做面板级局部刷新。
     """
-    accounts, err = api_get_resource(token, uid)
-    if err:
-        return None, err
+    src = fetch_sources(token, uid, sync_days, hub=hub, fresh=fresh)
+
+    accounts, res_err = src.get("resource") or (None, "资源接口未返回")
+    if res_err or not accounts:
+        return None, res_err or "积分资源接口返回为空"
+
     packages = parse_accounts(accounts)
     groups = summarize(packages)
     waste = compute_waste(packages)
     snaps = load_snapshots()
     balance, net_change = build_timeline(snaps)
-    st, _ = api_checkin_status(token, uid)
+
+    st, _ck_err = src.get("checkin") or (None, None)
     st = st or {}
 
-    # ===== 权威层 L5：请求流水（同步 + 归档；失败不影响整页）=====
+    # ===== 权威层 L5：请求流水（并发已就绪；失败不影响整页）=====
     l5_rows, l5_meta = [], None
-    try:
-        want = sync_days if sync_days is not None else REQ_MAX_WINDOW_DAYS
-        l5_rows, l5_meta, l5_err = sync_requests(token, uid, want)
-        if l5_err:
-            l5_meta = {"error": l5_err}
-            l5_rows = []
-    except Exception as e:               # 兜底：绝不因 L5 抛异常而白屏
-        l5_meta = {"error": "L5 同步异常: %s" % e}
+    l5_payload, l5_err = src.get("l5") or (None, "L5 未拉取")
+    if l5_err or not l5_payload:
         l5_rows = []
-    l5_rows = l5_rows or []
+        l5_meta = {"error": l5_err or "L5 未返回数据"}
+    else:
+        l5_rows = l5_payload.get("rows") or []
+        l5_meta = l5_payload.get("meta") or {}
 
     # ===== 权威层 L6：包生命周期（失败不影响整页）=====
-    try:
-        l6_lists, l6_meta, l6_err = api_packages_both(token, uid)
-        if l6_err:
-            l6_meta = {"partial_errors": [l6_err]}
-            l6_lists = {"valid": [], "expired": []}
-    except Exception as e:
-        l6_meta = {"partial_errors": ["L6 异常: %s" % e]}
+    l6_payload, l6_err = src.get("l6") or (None, "L6 未拉取")
+    if not l6_payload:
         l6_lists = {"valid": [], "expired": []}
+        l6_meta = {"partial_errors": [l6_err or "L6 未返回数据"]}
+    else:
+        l6_lists = l6_payload.get("lists") or {"valid": [], "expired": []}
+        l6_meta = dict(l6_payload.get("meta") or {})
+        if l6_err:
+            l6_meta["partial_errors"] = list(l6_meta.get("partial_errors") or []) + [str(l6_err)]
     l6_valid = parse_pkg_lifecycle((l6_lists or {}).get("valid"), "valid")
     l6_expired = parse_pkg_lifecycle((l6_lists or {}).get("expired"), "expired")
     waste_auth = compute_waste_authoritative(l6_expired)
@@ -1613,6 +1803,7 @@ def build_dashboard_data(token, uid, account, sync_days=None):
     today_used = compute_today_used(usage_hist)
 
     data = {
+        "version": VERSION,                 # 技能版本（来自 manifest.yaml，工作台页头展示）
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "nickname": account.get("nickname", "-"),
         "account_type": account.get("type", ""),
@@ -1717,10 +1908,14 @@ def cmd_render(token, uid, account):
             data_js = f.read()
         with open(dashboard_html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
-        inline_html = html_content.replace(
-            '<script src="dashboard_data.js"></script>',
-            '<script>\n' + data_js + '\n</script>'
-        )
+        # 用正则而非固定串：静态标签带 async 等属性时也要能被认出来，
+        # 否则替换失败会静默产出一个「依赖外部 data.js」的假单文件（分享出去打不开）。
+        inline_html, n_sub = re.subn(
+            r'<script src="dashboard_data\.js"[^>]*></script>',
+            lambda _m: '<script>\n' + data_js + '\n</script>',
+            html_content, count=1)
+        if n_sub != 1:
+            raise RuntimeError("未在 dashboard.html 中找到 dashboard_data.js 脚本标签（替换 0 处）")
         with open(inline_html_path, "w", encoding="utf-8") as f:
             f.write(inline_html)
         print("内嵌版已生成：%s（自含数据，单文件可分享）" % inline_html_path)

@@ -229,6 +229,74 @@
   .hb.no_baseline .dot-i { background: #94a3b8; }
   .hb.no_baseline .hb-v { color: #64748b; }
 
+  /* ---------- 页头版本号 ---------- */
+  .ver {
+    margin-left: 8px; padding: 2px 8px; border-radius: 20px;
+    font-size: 11.5px; font-weight: 600; letter-spacing: .2px;
+    color: var(--primary); background: #eef5ff; border: 1px solid #d6e6ff;
+    font-family: ui-monospace, Consolas, monospace; cursor: default;
+  }
+
+  /* ---------- 面板状态条（分面板异步加载 + 局部刷新） ---------- */
+  .panel-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 18px; }
+  .panel-bar .pb-title { font-size: 12px; color: var(--muted); margin-right: 2px; }
+  .pb {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+    padding: 3px 4px 3px 10px; border-radius: 20px; border: 1px solid var(--border);
+    background: #fff; color: var(--text); white-space: nowrap; font-family: inherit;
+  }
+  .pb .pb-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--muted); }
+  .pb .pb-k { color: var(--muted); cursor: pointer; }
+  .pb .pb-k:hover { color: var(--primary); }
+  .pb .pb-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pb .pb-r {
+    border: none; background: transparent; cursor: pointer; color: var(--muted);
+    font-size: 13px; line-height: 1; padding: 2px 4px; border-radius: 50%;
+  }
+  .pb .pb-r:hover { color: var(--primary); background: #eef5ff; }
+  .pb.ok .pb-dot { background: var(--green); }
+  .pb.loading .pb-dot { background: var(--primary); animation: pb-pulse 1s ease-in-out infinite; }
+  .pb.loading .pb-v { color: var(--primary); font-weight: 500; }
+  .pb.error { border-color: #fecaca; background: #fff5f5; }
+  .pb.error .pb-dot { background: var(--red); }
+  .pb.error .pb-v { color: var(--red); }
+  @keyframes pb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+  /* ---------- 服务版本提示条（8090 上仍是旧进程时降级为全量模式） ---------- */
+  .svc-note {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 9px 12px; margin-bottom: 14px; border-radius: 10px;
+    background: #fffbeb; border: 1px solid #fde68a; color: var(--text);
+    font-size: 12.5px; line-height: 1.6; text-align: left;
+  }
+  .svc-note .sn-ico {
+    width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%;
+    background: var(--amber); color: #fff; font-size: 11px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .svc-note .sn-txt { flex: 1 1 340px; }
+  .svc-note .sn-txt b { color: #b45309; }
+  .svc-note code {
+    background: #fff; border: 1px solid #fde68a; border-radius: 4px;
+    padding: 0 4px; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+  }
+
+  /* 面板加载态：未出数据前给一块轻量骨架，避免"白屏像坏了" */
+  .panel-skeleton { padding: 26px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
+  .panel-skeleton .sk-line {
+    height: 10px; margin: 8px auto; border-radius: 6px; max-width: 520px;
+    background: linear-gradient(90deg, #eef2f7 25%, #f7fafc 37%, #eef2f7 63%);
+    background-size: 400% 100%; animation: sk 1.3s ease infinite;
+  }
+  .panel-skeleton .sk-line:nth-child(2) { width: 78%; }
+  .panel-skeleton .sk-line:nth-child(3) { width: 62%; }
+  @keyframes sk { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+  .panel-err {
+    padding: 18px; margin-bottom: 14px; border-radius: 10px; font-size: 12.5px;
+    background: #fff5f5; border: 1px solid #fecaca; color: #b91c1c; line-height: 1.7;
+  }
+  .panel-err b { font-weight: 600; }
+
   /* ---------- 轻量页签 ---------- */
   .tabs { display: inline-flex; background: #f1f5f9; border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
   .tabs button {
@@ -270,7 +338,7 @@
 <!-- 顶部工具栏 -->
 <div class="topbar" data-page-node-id="OElHUsG2p1UCZHBHJy6bMA">
   <div class="topbar-inner" data-page-node-id="OOLuvQSXtq4zJqiXfexSap">
-    <div class="logo" data-page-node-id="9niEXK3Bp6WvF5x9tERd6l"><img src="assets/workbuddy-logo.png" alt="WorkBuddy" class="logo-img" data-page-node-id="N9yhXt36NXM1PCK0B9yQgD">WorkBuddy 积分工作台</div>
+    <div class="logo" data-page-node-id="9niEXK3Bp6WvF5x9tERd6l"><img src="assets/workbuddy-logo.png" alt="WorkBuddy" class="logo-img" data-page-node-id="N9yhXt36NXM1PCK0B9yQgD">WorkBuddy 积分工作台<span class="ver" id="app-ver" title="技能版本（取自 manifest.yaml）">v—</span></div>
     <div class="user-chip" data-page-node-id="cCZJnCwkbfTSBCLRPYeRLK">
       <div class="user-avatar" id="user-avatar" data-page-node-id="n06UDy4ZEFh25RVNlYOxT4">S</div>
       <div data-page-node-id="jX3OFurFLEKj1i5qcXzhxF"><div class="user-name" id="user-name" data-page-node-id="6fRVaN9kfcp2oRPEiOj5nt">-</div></div>
@@ -324,6 +392,12 @@
 
   <!-- 数据源健康（三态徽章：正常 / 降级 / 缺失 / 无基准） -->
   <div class="health-bar" id="health-bar" style="display:none" data-page-node-id="Hl7vT2mQpC4bWdYsRu9AeN"></div>
+
+  <!-- 服务版本提示（旧版服务占着 8090 时，说明已降级为全量模式 + 如何升级） -->
+  <div class="svc-note" id="svc-note" style="display:none"></div>
+
+  <!-- 面板状态条：三个面板各自独立加载、独立刷新（点名称跳到该面板，点 ↻ 仅刷新它） -->
+  <div class="panel-bar" id="panel-bar" data-page-node-id="Pa8nLbQ4Zk6mXcVtYw2SjE"></div>
 
   <!-- 核心指标卡 -->
   <section class="cards" id="sec-overview" data-page-node-id="yZQT5a33W50GDUzYK68ris"></section>
@@ -448,7 +522,13 @@
 </div>
 
 <script src="assets/echarts.min.js"></script>
-<script src="dashboard_data.js"></script>
+<!--
+  静态数据。加 async：它只是 file:// / 内嵌单文件模式的兜底数据源，
+  HTTP 模式下真正的数据来自 /api/* 分面板接口。不加 async 的话，浏览器解析会在
+  这里被阻塞（实测冷启动 869ms），三个面板请求要等它跑完才发得出去 —— 首屏凭空多等一截。
+  （render 生成 dashboard_inline.html 时会把本标签整段替换为内联数据脚本。）
+-->
+<script src="dashboard_data.js" async></script>
 <script>
 (function () {
   let DATA = window.CREDITS_DATA || null;
@@ -697,14 +777,12 @@
     });
   }
 
-  // ---------- 主渲染 ----------
-  function renderAll(D) {
-    DATA = D;
-    computeRange();
-    syncCheckinBtn(D);
-    firstLoadPrompts(D);
+  // ---------- 主渲染（面板级） ----------
+  // 拆成三个面板渲染函数，与后端 /api/overview、/api/requests、/api/lifecycle 一一对应。
+  // 每个函数只读自己那部分键，所以某个接口慢或失败都不会污染别的面板。
 
-    // 给面板标题注入图标（幂等，避免重复调用时叠加 span）
+  // 给面板标题注入图标（幂等，避免重复调用时叠加 span）
+  function injectPanelIcons() {
     document.querySelectorAll('[data-icon]').forEach(function (h) {
       const key = h.getAttribute('data-icon');
       if (ICONS[key] && !h.querySelector('.ph-icon')) {
@@ -712,7 +790,11 @@
         h.innerHTML = '<span class="ph-icon">' + ICONS[key] + '</span><span>' + label + '</span>';
       }
     });
+  }
 
+  // ---- 概览 · KPI 区（账号 / 摘要 / 指标卡 / 收支损失）----
+  // 单独成函数：消耗明细与包生命周期拿回新口径后，只需重绘这一小块即可同步 KPI。
+  function renderOverviewKpis(D) {
     // 账号
     const nick = D.nickname || '-';
     document.getElementById('user-name').textContent = nick;
@@ -727,11 +809,9 @@
     if (D.summary) { sb.innerHTML = '<span class="ph-icon" style="color:var(--primary); vertical-align:middle; margin-right:4px;">' + ICONS.info + '</span><span class="dot">◆</span>' + D.summary; sb.style.display = 'block'; }
     else { sb.style.display = 'none'; }
 
-    // 数据源健康徽章（三态）
-    renderHealth(D);
-
     // 指标卡
     const w = D.waste || {};
+    const wa = D.waste_authoritative || null;
     // 登录态有效期（accessToken）：提示何时需要打开一次 WorkBuddy 续期
     const au = D.auth_status || null;
     let authCard = { cls: '', icon: 'clock', label: '登录态有效期', value: '—', sub: '登录态信息读取失败' };
@@ -752,8 +832,9 @@
       { cls: '', icon: 'clock', label: '预计可用天数', value: D.days_left != null ? D.days_left + ' 天' : '—', sub: '近7天日均 ' + (D.daily_avg || 0).toFixed(1) + ' 积分' },
       { cls: '', icon: 'chart', label: '累计消耗', value: (D.total_used || 0).toFixed(2), sub: '云端有效批次累计已用（逐包口径）' },
       { cls: 'amber', icon: 'alert', label: '即将到期（7天内）', value: w.at_risk_count || 0, sub: '涉及 ' + (w.at_risk || 0).toFixed(2) + ' 积分' },
-      { cls: 'red', icon: 'loss', label: '已过期损失', value: ((D.waste_authoritative && D.waste_authoritative.wasted_total) || w.wasted || 0).toFixed(2),
-        sub: '已过期未用完 ' + ((D.waste_authoritative && D.waste_authoritative.wasted_count) || w.wasted_count || 0) + ' 批' + (D.waste_authoritative ? ' · 服务端权威' : '') },
+      { cls: 'red', icon: 'loss', label: '已过期损失',
+        value: (((wa && wa.wasted_total) != null ? wa.wasted_total : (w.wasted || 0))).toFixed(2),
+        sub: '已过期未用完 ' + (((wa && wa.wasted_count) || w.wasted_count || 0)) + ' 批' + (wa ? ' · 服务端权威' : '') },
       { cls: 'green', icon: 'cal', label: '今日签到', value: (D.checkin && D.checkin.today_checked_in) ? '已签到' : '未签到', sub: '连续 ' + (D.checkin ? D.checkin.streak_days : 0) + ' 天 · 每日 +' + (D.checkin ? D.checkin.daily_credit : 0) },
       authCard,
       // 用户信息（来自 account：nickname / type）
@@ -774,7 +855,10 @@
       return '<div class="card ' + x.cls + '"><div class="card-head">' + ic(x.icon) + '<span>' + x.k + '</span></div>' +
              '<div class="value" style="font-size:19px">' + x.v + '</div><div class="sub">' + x.d + '</div></div>';
     }).join('');
+  }
 
+  // ---- 概览 · 图表区（每日消耗 / 累计趋势 / 收支日历）----
+  function renderOverviewCharts(D) {
     // 每日消耗 / 累计消耗趋势（逐包追踪口径，自积累）
     const dailyUsage = (D.usage_daily || []).filter(function (x) { return inRange(x.date); });
     const hasUsage = dailyUsage.some(function (x) { return x.credit > 0; });
@@ -863,7 +947,10 @@
         }],
       }));
     } else { document.getElementById('chart-heat-income').innerHTML = '<div class="empty">所选范围内暂无收入记录</div>'; }
+  }
 
+  // ---- 概览 · 表格区（收支账本 / 最近会话 / 积分批次）----
+  function renderOverviewTables(D) {
     // 收支账本（按日期过滤，倒序，分页）
     const ledger = (D.ledger || []).filter(function (x) { return inRange(x.date); }).slice().reverse();
     setupPager('ledger-pager', ledger.length, 14, function (page) {
@@ -886,10 +973,30 @@
 
     // 积分批次（搜索 + 状态筛选 + 分页）
     renderBatch();
-    // 消耗明细（请求级，口径 A）
+  }
+
+  // ---- 概览面板总装 ----
+  function renderOverviewPanel(D) {
+    computeRange();
+    syncCheckinBtn(D);
+    firstLoadPrompts(D);
+    renderOverviewKpis(D);
+    renderOverviewCharts(D);
+    renderOverviewTables(D);
+  }
+
+  // ---- 三面板全量重绘（日期范围切换 / file:// 静态模式 / 兜底）----
+  function renderAllPanels(D) {
+    renderOverviewPanel(D);
     renderRequests(D);
-    // 包生命周期（有效期内 / 已过期）
     renderLifecycle(D);
+    renderHealth(D);
+  }
+
+  // 兼容旧调用点（日期范围切换等只影响概览，但仍整体重绘，保证一致性）
+  function renderAll(D) {
+    DATA = D;
+    renderAllPanels(D);
   }
 
   // ---------- 数据源健康徽章 ----------
@@ -1073,9 +1180,81 @@
     });
   }
 
-  // ---------- 交互 ----------
+  // ---------- 交互：分面板加载 / 局部刷新 ----------
+  // 设计要点：三个面板各自独立走一个接口、独立渲染、独立失败。
+  // 首屏并行发出三个请求，谁先回来谁先上屏（不再等"全量数据"一次性返回）；
+  // 单个面板出错只影响它自己，其余照常可用 —— 这正是首屏提速与体验鲁棒的关键。
+
+  const PANELS = ['overview', 'requests', 'lifecycle'];
+  const PANEL_LABEL = { overview: '概览', requests: '消耗明细', lifecycle: '包生命周期' };
+  // 面板 → 它负责的 DOM 区域（加载态 / 错误态要落在这些区域里）
+  const PANEL_SECTIONS = {
+    overview: ['sec-overview', 'sec-charts', 'sec-heat', 'sec-ledger', 'sec-sessions', 'sec-waste', 'sec-batch'],
+    requests: ['sec-requests'],
+    lifecycle: ['sec-lifecycle'],
+  };
+  const panelState = {};   // panel -> {status:'loading'|'ok'|'error', at, ms, error, static}
+
+  function hms(s) { return (s || '').slice(11, 19) || ''; }
+
+  function isStaticMode() { return location.protocol === 'file:'; }
+
+  function applyVersion(v) {
+    if (!v) return;
+    const el = document.getElementById('app-ver');
+    if (el && el.getAttribute('data-v') !== v) {
+      el.textContent = 'v' + v;
+      el.setAttribute('data-v', v);
+    }
+  }
+
+  // ---- 后端能力探测 / 请求超时 ----
+  // 页面 HTML 是实时从磁盘读的，8090 上的服务进程却可能是旧版（旧进程一直占着端口，
+  // 启动器曾误判为「已在运行」）。那时三个面板接口全部 404：控制台一片红，用户也看不懂。
+  // 所以先探一次 /api/version —— 拿到版本 → 面板模式；404 但服务在 → 旧版，直接走全量。
+  let backendMode = null;   // 'panels' | 'legacy' | 'down'
+
+  function fetchWithTimeout(url, ms) {
+    const ctl = new AbortController();
+    const timer = setTimeout(function () { ctl.abort(); }, ms || 45000);
+    return fetch(url, { cache: 'no-store', signal: ctl.signal })
+      .finally(function () { clearTimeout(timer); });
+  }
+
+  function probeBackend() {
+    return fetchWithTimeout('/api/version', 8000)
+      .then(function (r) {
+        if (!r.ok) { backendMode = 'legacy'; return backendMode; }   // 服务在，但没有该接口
+        return r.json().then(function (d) {
+          if (d && d.version) { applyVersion(d.version); backendMode = 'panels'; }
+          else backendMode = 'legacy';
+          return backendMode;
+        });
+      })
+      .catch(function () { backendMode = 'down'; return backendMode; });  // 连不上
+  }
+
+  function hideSvcNote() {
+    const el = document.getElementById('svc-note');
+    if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  }
+
+  function showSvcNote(html) {
+    const el = document.getElementById('svc-note');
+    if (!el) return;
+    el.innerHTML = html;
+    el.style.display = 'flex';
+  }
+
+  // 旧版服务占着的提示：说明现状 + 给出可执行的一步操作
+  const SVC_NOTE_LEGACY =
+    '<span class="sn-ico">!</span>' +
+    '<span class="sn-txt"><b>本地服务仍是旧版本</b>：8090 上跑的进程不含面板接口，' +
+    '已自动降级为<b>全量模式</b> —— 数据照常显示，但三个面板的独立刷新与耗时统计暂不可用。' +
+    '重新双击桌面「积分工作台」快捷方式即可自动升级服务，随后点右侧按钮重试。</span>' +
+    '<button class="btn" id="svc-recheck">重新检测</button>';
+
   // file:// 协议下 fetch 不可用，改用 script 标签加载同目录的 dashboard_data.js
-  // HTTP 协议下优先走 /api/data（实时、含运行时提示词）；仅在失败时回退到静态 script
   function loadViaScriptTag() {
     return new Promise(function (resolve, reject) {
       const s = document.createElement('script');
@@ -1085,38 +1264,262 @@
       document.head.appendChild(s);
     });
   }
-  function loadData() {
-    if (location.protocol === 'file:') return loadViaScriptTag();
-    // HTTP：先试实时接口（含提示词）；失败再退静态文件（无提示词），保证页面不空
-    return fetch('/api/data', { cache: 'no-store' })
+
+  function fetchPanel(panel, fresh) {
+    const url = '/api/' + panel + (fresh ? '?fresh=1' : '');
+    return fetchWithTimeout(url, 60000)
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
       })
       .then(function (d) {
-        if (d && d.error) throw new Error(d.error);
+        if (!d || d.error) throw new Error((d && d.error) || '响应为空');
         return d;
-      })
-      .catch(function () { return loadViaScriptTag(); });
+      });
   }
 
-  // 统一的数据刷新：重新拉取并渲染。viaBtn=true 时在「刷新数据」按钮上给出可见反馈
+  function loadPanel(panel, fresh) {
+    panelState[panel] = Object.assign({}, panelState[panel], { status: 'loading' });
+    renderPanelBar();
+    setPanelSkeleton(panel, true);
+    const t0 = performance.now();
+    return fetchPanel(panel, fresh)
+      .then(function (d) {
+        const ms = (d.elapsed_ms != null) ? d.elapsed_ms : Math.round(performance.now() - t0);
+        applyPanel(panel, d, ms);
+        return d;
+      })
+      .catch(function (e) {
+        panelState[panel] = { status: 'error', error: (e && e.message) || String(e) };
+        renderPanelBar();
+        setPanelSkeleton(panel, false);
+        renderPanelError(panel, e);
+        return null;
+      });
+  }
+
+  // 把一个面板的响应并进 DATA 并按需重绘。只重绘受影响的区域，不整页重排。
+  function applyPanel(panel, d, ms) {
+    DATA = Object.assign({}, DATA || {}, d);
+    panelState[panel] = { status: 'ok', at: hms(d.generated_at), ms: ms, static: isStaticMode() };
+    renderedPanels[panel] = true;
+    setPanelSkeleton(panel, false);
+
+    if (panel === 'overview') {
+      renderOverviewPanel(DATA);
+      firstLoadPrompts(DATA);
+    } else if (panel === 'requests') {
+      renderRequests(DATA);
+      // 消耗明细拥有 L5 口径（今日已使用 / usage_daily）→ 回带刷新概览 KPI
+      if (overviewReady()) renderOverviewKpis(DATA);
+    } else if (panel === 'lifecycle') {
+      renderLifecycle(DATA);
+      // 包生命周期拥有权威浪费 → 回带刷新概览 KPI
+      if (overviewReady()) renderOverviewKpis(DATA);
+    }
+
+    renderHealth(DATA);
+    applyVersion(d.version);
+    renderPanelBar();
+  }
+
+  function overviewReady() {
+    return !!(panelState.overview && panelState.overview.status === 'ok');
+  }
+
+  // ---- 面板状态条 ----
+  function renderPanelBar() {
+    const bar = document.getElementById('panel-bar');
+    if (!bar) return;
+    bar.innerHTML = '<span class="pb-title">面板</span>' + PANELS.map(function (p) {
+      const st = panelState[p] || {};
+      let cls = '', val = '待加载';
+      if (st.status === 'loading') { cls = 'loading'; val = '加载中…'; }
+      else if (st.status === 'error') { cls = 'error'; val = '失败 · 点 ↻ 重试'; }
+      else if (st.status === 'ok') {
+        cls = 'ok';
+        if (st.legacy) val = '全量模式 · ' + (st.at || '');   // 旧版服务：没有面板级耗时
+        else if (st.static) val = '静态数据';
+        else val = (st.ms != null ? (st.ms / 1000).toFixed(2) + 's · ' : '') + (st.at || '');
+      }
+      const tip = st.error ? ('上次失败：' + st.error) : ('刷新「' + PANEL_LABEL[p] + '」');
+      return '<span class="pb ' + cls + '" data-panel="' + p + '" title="' + tip + '">' +
+             '<span class="pb-dot"></span>' +
+             '<span class="pb-k" data-panel="' + p + '">' + PANEL_LABEL[p] + '</span>' +
+             '<span class="pb-v">' + val + '</span>' +
+             '<button class="pb-r" data-panel="' + p + '" title="仅刷新本面板" aria-label="刷新' + PANEL_LABEL[p] + '">↻</button>' +
+             '</span>';
+    }).join('');
+    bar.style.display = 'flex';
+  }
+
+  const renderedPanels = {};   // panel -> true 表示至少成功上屏过一次
+
+  function setPanelSkeleton(panel, on) {
+    if (!on) {
+      document.querySelectorAll('.panel-skeleton').forEach(function (n) { n.remove(); });
+      document.querySelectorAll('.panel-err').forEach(function (n) { n.remove(); });
+      return;
+    }
+    if (renderedPanels[panel]) return;   // 已上屏过：只在状态条上体现加载，不覆盖已有内容
+    if (panel === 'overview') {
+      const sb = document.getElementById('summary-bar');
+      if (sb && !sb.textContent.trim()) { sb.textContent = '正在加载…'; sb.style.display = 'block'; }
+      return;
+    }
+    const tbody = document.getElementById(panel === 'requests' ? 'req-tbody' : 'lc-tbody');
+    if (tbody && !tbody.innerHTML.trim()) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="panel-skeleton">' +
+        '<div class="sk-line"></div><div class="sk-line"></div><div class="sk-line"></div></div></td></tr>';
+    }
+  }
+
+  function renderPanelError(panel, e) {
+    const host = document.getElementById((PANEL_SECTIONS[panel] || [])[0]);
+    if (!host) return;
+    const div = document.createElement('div');
+    div.className = 'panel-err';
+    div.innerHTML = '<b>「' + PANEL_LABEL[panel] + '」数据加载失败：</b>' + ((e && e.message) || e) +
+      '<br>该面板其余内容不受影响。请确认本地服务在运行（<code>python scripts/serve.py</code>），' +
+      '然后点此面板状态条上的 ↻ 重试。';
+    host.insertBefore(div, host.firstChild);
+  }
+
+  // 首屏：三个面板并行请求；全部失败（或概览失败）时退回静态 dashboard_data.js，保证页面不空
+  function loadAllPanels(fresh) {
+    return Promise.all(PANELS.map(function (p) { return loadPanel(p, fresh); }));
+  }
+
+  // 全量接口（面板接口不可用 / 旧版服务时的通道）
+  function loadViaApiData() {
+    return fetchWithTimeout('/api/data', 90000)
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        if (!d || d.error) throw new Error((d && d.error) || '响应为空');
+        return d;
+      });
+  }
+
+  // 等静态数据就绪。数据脚本带 async（见 <head> 下方注释），也可能是内嵌单文件里的
+  // 内联脚本 —— 两种情况下它都会很快出现，先等一小会儿，避免在 file:// 下重复加载。
+  function waitStaticData(timeoutMs) {
+    const deadline = Date.now() + (timeoutMs || 400);
+    return new Promise(function (resolve) {
+      (function poll() {
+        const d = window.CREDITS_DATA;
+        if (d && typeof d === 'object' && !d.error) return resolve(d);
+        if (Date.now() > deadline) return resolve(null);
+        setTimeout(poll, 25);
+      })();
+    });
+  }
+
+  // file:// / 内嵌单文件模式：用页面自带的静态数据一次性渲染全部面板。
+  // 内嵌单文件分享出去时旁边没有 data.js，只有靠页面自带的数据才不依赖外部请求。
+  function loadStatic(forceReload) {
+    const task = forceReload
+      ? loadViaScriptTag()
+      : waitStaticData(400).then(function (d) { return d || loadViaScriptTag(); });
+    return task.then(function (d) {
+      if (!d || d.error) throw new Error((d && d.error) || '静态数据为空');
+      DATA = Object.assign({}, DATA || {}, d);
+      PANELS.forEach(function (p) {
+        panelState[p] = { status: 'ok', at: hms(d.generated_at), static: true };
+      });
+      renderPanelBar();
+      applyVersion(d.version);
+      renderAllPanels(DATA);
+      return d;
+    });
+  }
+
+  // 兜底链：面板接口 → 全量接口 → 静态数据。逐级降级，保证页面始终有内容。
+  // legacy=true 表示走这条通道是因为「后端过旧」而非上游抖动，要挂提示条说明原因。
+  function loadFallback(legacy) {
+    return loadViaApiData()
+      .then(function (d) {
+        DATA = Object.assign({}, DATA || {}, d);
+        PANELS.forEach(function (p) {
+          panelState[p] = { status: 'ok', at: hms(d.generated_at), ms: null, legacy: !!legacy };
+        });
+        renderPanelBar();
+        applyVersion(d.version);
+        if (legacy) { markVersionUnknown(); showSvcNote(SVC_NOTE_LEGACY); }
+        else hideSvcNote();
+        renderAllPanels(DATA);
+        return d;
+      })
+      .catch(function () { return loadStatic(true); });
+  }
+
+  function markVersionUnknown() {
+    const el = document.getElementById('app-ver');
+    if (el && !el.getAttribute('data-v')) {
+      el.textContent = 'v?';
+      el.title = '本地服务为旧版本，读不到版本号；重启服务后即可显示';
+    }
+  }
+
+  // 顶部「刷新数据」：先确认后端能力，再决定走「三面板并行重取」还是「全量接口」。
   function refreshData(viaBtn) {
     const rbtn = document.getElementById('refresh-btn');
     const old = rbtn.textContent;
     if (viaBtn) { rbtn.disabled = true; rbtn.textContent = '刷新中…'; }
-    return loadData()
-      .then(function (data) {
-        if (!data || data.error) { alert('刷新失败：' + ((data && data.error) || '未知错误')); return data; }
-        renderAll(data);
-        return data;
-      })
-      .catch(function (e) { alert('无法加载数据：' + (e.message || e) + '\n\n如通过 HTTP 访问，请先运行：python scripts/serve.py\n如通过 file:// 访问，请先运行：python scripts/workbuddy_credits.py render 生成 dashboard_data.js'); })
+    const task = isStaticMode()
+      ? loadStatic(true)
+      : probeBackend().then(function (mode) {
+          if (mode !== 'panels') {
+            // 旧版服务 / 服务未起：不发三个注定 404 的面板请求，直接走全量通道
+            return loadFallback(mode === 'legacy');
+          }
+          return loadAllPanels(true).then(function (res) {
+            if (res.every(function (x) { return x === null; })) return loadFallback(false);
+            return res;
+          });
+        });
+    return task
+      .catch(function (e) { alert('无法加载数据：' + (e.message || e)); })
       .finally(function () { if (viaBtn) { rbtn.disabled = false; rbtn.textContent = old; } });
   }
 
   document.getElementById('refresh-btn').addEventListener('click', function () {
     refreshData(true);
+  });
+
+  // 面板状态条：点名称跳到该面板，点 ↻ 只刷新该面板（fresh=1，仅重取它拥有的数据源）
+  document.getElementById('panel-bar').addEventListener('click', function (e) {
+    const btn = e.target.closest('.pb-r');
+    if (btn) {
+      e.preventDefault();
+      const panel = btn.getAttribute('data-panel');
+      if (panelState[panel] && panelState[panel].status === 'loading') return;
+      if (backendMode !== 'panels') { refreshData(true); return; }   // 旧版服务无面板接口 → 退化为全量刷新
+      loadPanel(panel, true);
+      return;
+    }
+    const nameEl = e.target.closest('.pb-k');
+    if (nameEl) {
+      const panel = nameEl.getAttribute('data-panel');
+      const sec = document.getElementById((PANEL_SECTIONS[panel] || [])[0]);
+      if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+
+  // 提示条「重新检测」：用户重启服务后一键切回面板模式，不必手动刷整页
+  document.getElementById('svc-note').addEventListener('click', function (e) {
+    const btn = e.target.closest('#svc-recheck');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = '检测中…';
+    probeBackend().then(function (mode) {
+      if (mode === 'panels') { hideSvcNote(); loadAllPanels(false); return; }
+      showSvcNote(mode === 'down'
+        ? '<span class="sn-ico">!</span><span class="sn-txt">仍未连上本地服务，请确认服务已启动后再试。</span>'
+        : SVC_NOTE_LEGACY);
+    });
   });
 
   document.getElementById('range-seg').addEventListener('click', function (e) {
@@ -1331,14 +1734,39 @@
   });
 
   // 初始渲染
-  // HTTP 模式：static <script> 已先加载（可能为剥离版），仍需拉一次实时接口取回提示词
-  // file:// 模式：只能用静态数据，直接渲染
-  if (DATA && location.protocol === 'file:') {
-    renderAll(DATA);
+  // - file:// / 内嵌单文件：用页面自带静态数据一次性渲染
+  // - HTTP：三个面板并行拉取，谁先回来谁先上屏（不再等一次性全量返回）；
+  //         概览失败才逐级兜底（全量接口 → 静态文件），保证页面不空。
+  injectPanelIcons();
+  renderPanelBar();
+  document.getElementById('summary-bar').textContent = '正在加载…';
+  document.getElementById('summary-bar').style.display = 'block';
+
+  if (isStaticMode()) {
+    loadStatic(false).catch(function (e) {
+      const sb = document.getElementById('summary-bar');
+      sb.textContent = '静态数据加载失败：' + ((e && e.message) || e) +
+        '（请先运行 python scripts/workbuddy_credits.py render）';
+      sb.style.display = 'block';
+    });
   } else {
-    document.getElementById('summary-bar').textContent = '正在加载…';
-    document.getElementById('summary-bar').style.display = 'block';
-    refreshData(false);
+    // 先探后端能力，再决定通道：
+    //   新版服务 → 三面板并行拉取，谁先回来谁先上屏
+    //   旧版服务（如 8090 上残留的旧进程）→ 直接走全量接口 + 提示条，不发注定 404 的请求
+    //   连不上    → 逐级兜底（全量接口 → 静态文件），保证页面不空
+    probeBackend().then(function (mode) {
+      if (mode === 'panels') {
+        return loadAllPanels(false).then(function (res) {
+          if (res[0] === null) return loadFallback(false);   // 概览失败 → 兜底，页面至少可用
+          return null;
+        });
+      }
+      return loadFallback(mode === 'legacy');
+    }).catch(function () {
+      const sb = document.getElementById('summary-bar');
+      sb.textContent = '无法连接本地服务：请先运行 python scripts/serve.py，然后刷新页面。';
+      sb.style.display = 'block';
+    });
   }
 })();
 </script>
