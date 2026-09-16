@@ -39,9 +39,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # 发行说明优先取 README 的「更新日志」对应段落（人工维护、单一数据源）；
+          # 取不到才回退到 GitHub 自动生成 —— 本项目无 PR，自动 notes 往往只剩
+          # 一行 "Full Changelog"，Release 页面等于没有说明。
+          NOTES_ARGS=(--generate-notes)
+          if python scripts/extract_changelog.py "$GITHUB_REF_NAME" > /tmp/release-notes.md; then
+            bytes="$(wc -c < /tmp/release-notes.md)"
+            echo "发行说明：取自 README 更新日志（${bytes} 字节）"
+            NOTES_ARGS=(--notes-file /tmp/release-notes.md)
+          else
+            echo "::warning::README 更新日志里没有 $GITHUB_REF_NAME 的段落，回退到自动生成"
+          fi
+
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+            "${NOTES_ARGS[@]}" \
             dist/workbuddy-credits-v*.zip \
             dist/workbuddy-credits.zip \
             dist/SHA256SUMS.txt
