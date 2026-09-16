@@ -402,7 +402,7 @@
   <!-- 核心指标卡 -->
   <section class="cards" id="sec-overview" data-page-node-id="yZQT5a33W50GDUzYK68ris"></section>
 
-  <!-- 趋势图（每日消耗/累计消耗趋势：改用逐包追踪口径，自积累，突破 17 天窗口） -->
+  <!-- 趋势图（每日消耗/累计消耗趋势：L5 服务端请求级流水优先，L2 逐包采样兜底并补足更早历史） -->
   <div class="grid-2" id="sec-charts" data-page-node-id="Y1Boiy5md1pgaycVGLmaoQ">
     <div class="panel" data-page-node-id="rIcPGFSAGGDoDfyrp0f8vE">
       <div class="panel-head" data-page-node-id="IOHnlF9FrvwELl4aFbkqXD"><h2 data-icon="bar" data-page-node-id="xzUGQAJ1DvW5u7px20G5Yw">每日消耗</h2></div>
@@ -425,7 +425,7 @@
       <div class="cal-title" data-page-node-id="8e0jolVJ8v4Dj2Wk6foslR">收入</div>
       <div class="chart-cal" id="chart-heat-income" data-page-node-id="GYai82neJVrNaWbALaU6ZX"></div>
     </div>
-    <div class="hint" data-page-node-id="toghDDl1Df8wrE8FGBuVI1">注：日历显示全部历史范围（不受上方日期筛选影响），消耗 = 各资源包「已用积分」的逐日增量（纯消耗口径，不受签到/到账/过期干扰，自今日起每日记录、逐步积累）；收入 = 签到 + 包到账，按真实到账时间归日。</div>
+    <div class="hint" data-page-node-id="toghDDl1Df8wrE8FGBuVI1">注：日历显示全部历史范围（不受上方日期筛选影响）。消耗优先取<b>服务端请求级流水</b>（覆盖最近 31 天，精确到每次调用），更早的日期由逐包采样补足；收入 = 签到 + 包到账，按真实到账时间归日。</div>
   </div>
 
   <!-- 收支账本 -->
@@ -496,7 +496,7 @@
   <div class="panel" id="sec-waste" data-page-node-id="Db6yD1dSwjMVBQ18ce4kAx">
     <div class="panel-head" data-page-node-id="EN4pnVjD0YrHFz4R1u4ylw"><h2 data-icon="pie" data-page-node-id="xBF1y6318wg8lO9rAagXRG">收支损失统计</h2></div>
     <div class="waste-grid" id="waste" data-page-node-id="fSQo8o8dFYCKuu5etaZWS5"></div>
-    <div class="hint" data-page-node-id="5EXePa9T53sCSTNrMENjXJ">注：过期浪费与到期风险按资源包到期时间计算，有效批次累计已用取自资源包 CapacityUsed 字段（不含已过期包）。</div>
+    <div class="hint" data-page-node-id="5EXePa9T53sCSTNrMENjXJ">注：过期浪费与到期风险按资源包到期时间计算。「套餐用量」等订阅型资源按<b>本周期</b>口径计量（与官网「套餐与用量」一致 —— 服务端的累计 CapacityUsed 字段对这类资源不随周期消耗更新，会把已用光的套餐算成满额）；其余批次为累计口径，不含已过期包。</div>
   </div>
 
   <!-- 积分批次 -->
@@ -825,12 +825,19 @@
         authCard = { cls: '', icon: 'clock', label: '登录态有效期', value: au.days_left + ' 天', sub: '有效至 ' + expDate };
       }
     }
+    // 订阅型（套餐用量）按「本周期」口径计量，与官网控制台一致。若服务端两组口径
+    // 出现分叉，说明页已按周期口径修正，修正量如实标注出来（供用户对账）。
+    const cn = D.capacity_note || {};
+    const capSub = '可用包 ' + (D.avail_count || 0) + ' 个' +
+      (cn.delta_if_cumulative
+        ? ' · 已按本周期口径修正 ' + cn.delta_if_cumulative.toFixed(2)
+        : '');
     const cards = [
-      { cls: '', icon: 'wallet', label: '可用积分', value: (D.total_remain || 0).toFixed(2), sub: '可用包 ' + (D.avail_count || 0) + ' 个' },
+      { cls: '', icon: 'wallet', label: '可用积分', value: (D.total_remain || 0).toFixed(2), sub: capSub },
       { cls: '', icon: 'bolt', label: '今日已使用', value: D.today_used != null ? D.today_used.toFixed(2) : '—',
         sub: (D.usage_source === 'L5' ? '服务端流水口径' : '逐包采样口径') + (D.today_used_l5 != null && D.today_used_l2 != null && Math.abs(D.today_used_l5 - D.today_used_l2) > 0.05 ? ' · 采样 ' + D.today_used_l2.toFixed(2) : '') },
       { cls: '', icon: 'clock', label: '预计可用天数', value: D.days_left != null ? D.days_left + ' 天' : '—', sub: '近7天日均 ' + (D.daily_avg || 0).toFixed(1) + ' 积分' },
-      { cls: '', icon: 'chart', label: '累计消耗', value: (D.total_used || 0).toFixed(2), sub: '云端有效批次累计已用（逐包口径）' },
+      { cls: '', icon: 'chart', label: '累计消耗', value: (D.total_used || 0).toFixed(2), sub: '有效批次已用合计（订阅型按本周期）' },
       { cls: 'amber', icon: 'alert', label: '即将到期（7天内）', value: w.at_risk_count || 0, sub: '涉及 ' + (w.at_risk || 0).toFixed(2) + ' 积分' },
       { cls: 'red', icon: 'loss', label: '已过期损失',
         value: (((wa && wa.wasted_total) != null ? wa.wasted_total : (w.wasted || 0))).toFixed(2),
@@ -849,7 +856,7 @@
     document.getElementById('waste').innerHTML = [
       { cls: 'red', icon: 'loss', k: '已过期未用完', v: (w.wasted || 0).toFixed(2) + ' 积分', d: (w.wasted_count || 0) + ' 批' },
       { cls: 'amber', icon: 'alert', k: '未来 7 天到期风险', v: (w.at_risk || 0).toFixed(2) + ' 积分', d: (w.at_risk_count || 0) + ' 批' },
-      { cls: '', icon: 'chart', k: '有效批次累计已用', v: (D.total_used || 0).toFixed(2) + ' 积分', d: '资源包视角（不含已过期包）' },
+      { cls: '', icon: 'chart', k: '有效批次已用', v: (D.total_used || 0).toFixed(2) + ' 积分', d: '资源包视角（不含已过期包；订阅型按本周期）' },
       { cls: 'green', icon: 'cal', k: '签到活动', v: (D.checkin && D.checkin.activity_name) || '-', d: (D.checkin && D.checkin.theme_name) || '' },
     ].map(function (x) {
       return '<div class="card ' + x.cls + '"><div class="card-head">' + ic(x.icon) + '<span>' + x.k + '</span></div>' +
@@ -859,7 +866,7 @@
 
   // ---- 概览 · 图表区（每日消耗 / 累计趋势 / 收支日历）----
   function renderOverviewCharts(D) {
-    // 每日消耗 / 累计消耗趋势（逐包追踪口径，自积累）
+    // 每日消耗 / 累计消耗趋势（L5 服务端流水优先、L2 逐包采样兜底）
     const dailyUsage = (D.usage_daily || []).filter(function (x) { return inRange(x.date); });
     const hasUsage = dailyUsage.some(function (x) { return x.credit > 0; });
     const dailyChart = initChart('chart-daily');
@@ -885,7 +892,7 @@
     } else { document.getElementById('chart-cum').innerHTML = '<div class="empty">暂无消耗数据</div>'; }
 
     // 收支日历（按天，GitHub 贡献图风格）。显示完整数据范围（不受 7/14 天过滤截断）。
-    const dailyCal = (D.usage_daily || []);       // 逐包追踪口径，完整范围
+    const dailyCal = (D.usage_daily || []);       // L5 优先 / L2 兜底，完整范围
     const incomeCal = (D.income_daily || []);     // 自积累账本，完整范围
     const heatChartExp = initChart('chart-heat-expense');
     const heatChartInc = initChart('chart-heat-income');
@@ -1175,7 +1182,17 @@
       const start = (page - 1) * 15;
       document.getElementById('expiry-tbody').innerHTML = list.slice(start, start + 15).map(function (p) {
         const tag = statusCls[p.status] || 'used';
-        return '<tr><td class="num">' + (p.cycle_end || '-') + '</td><td><span class="tag ' + tag + '">' + p.status + '</span></td><td class="num">' + p.remain.toFixed(2) + '</td><td class="num">' + p.used.toFixed(2) + '/' + p.size.toFixed(2) + '</td><td>' + p.label + '</td></tr>';
+        // 订阅型（套餐用量）按**本周期**计量 —— 与官网控制台一致；悬浮里留档累计口径供对账
+        let lbl = p.label;
+        let tip = '';
+        if (p.cycle_based) {
+          lbl += ' <span class="bk-sub">· 本周期</span>';
+          tip = ' title="订阅型资源按本周期计量（与官网「套餐与用量」一致）' +
+            (p.diverged && p.remain_cum != null
+              ? '；服务端累计口径 ' + p.remain_cum.toFixed(2) + '，本周期口径 ' + p.remain.toFixed(2) + '，本页取后者'
+              : '') + '"';
+        }
+        return '<tr' + tip + '><td class="num">' + (p.cycle_end || '-') + '</td><td><span class="tag ' + tag + '">' + p.status + '</span></td><td class="num">' + p.remain.toFixed(2) + '</td><td class="num">' + p.used.toFixed(2) + '/' + p.size.toFixed(2) + '</td><td>' + lbl + '</td></tr>';
       }).join('') || '<tr><td colspan="5" class="empty">无匹配批次</td></tr>';
     });
   }

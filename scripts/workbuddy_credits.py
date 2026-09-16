@@ -549,6 +549,65 @@ def classify(acc):
     return -2, ("加量包" if ("加量" in name or "叠加" in name) else "加量包/其他")
 
 
+def _capacity_views(a):
+    """解析一条资源的「累计」与「周期」两套容量口径。
+
+    服务端对同一条记录同时返回两组容量字段（实测确认）：
+      累计 CapacitySize / CapacityUsed / CapacityRemain
+      周期 CycleCapacitySize / CycleCapacityUsed / CycleCapacityRemain
+    两组都有 Precise 精确版（字符串），优先取精确版。
+
+    返回 {"cum": (size, used, remain) | None, "cyc": (size, used, remain) | None}；
+    一组内任一字段缺失即为 None（**区别于真实的 0**，故不能用 _num 兜成 0）。
+    """
+    def pick(prefix):
+        vals = []
+        for base in ("Size", "Used", "Remain"):
+            v = None
+            for k in (prefix + "Capacity" + base + "Precise",
+                      prefix + "Capacity" + base):
+                raw = a.get(k)
+                if raw is None or raw == "":
+                    continue
+                try:
+                    v = float(raw)
+                    break
+                except (TypeError, ValueError):
+                    continue
+            vals.append(v)
+        return None if any(x is None for x in vals) else tuple(vals)
+
+    return {"cum": pick(""), "cyc": pick("Cycle")}
+
+
+def _pick_capacity(a, key):
+    """按资源类型选出「当前可用」口径，返回 (size, used, remain, cycle_based, diverged, views)。
+
+    为什么订阅型必须改用周期口径（CapacityType=4，套餐用量）：
+      实测同一个资源对象的 `CapacityUsed=0` 而 `CycleCapacityUsed=500`。**周期区间是
+      累计区间的子集，累计已用不可能小于周期已用** —— 两者自相矛盾，说明服务端对
+      订阅型的累计字段**不随周期消耗更新**，长时间停留在「重置后初值」。
+      官网控制台（「套餐与用量」显示的下次权益周期更新时间 = CycleEndTime）按**周期口径**
+      渲染，故周期口径才是真实可用的余额。
+    其余类型（赠送包/加量包等）两组数值实测一致，沿用累计口径以保持既有语义。
+
+    diverged：两组是否不一致（真分叉），供 UI 如实标注。
+    """
+    views = _capacity_views(a)
+    cum, cyc = views["cum"], views["cyc"]
+    diverged = bool(cum and cyc and cum != cyc)
+    if key == TYPE_TRIAL and cyc is not None:
+        size, used, remain = cyc
+        return size, used, remain, True, diverged, views
+    if cum is not None:
+        size, used, remain = cum
+        return size, used, remain, False, diverged, views
+    if cyc is not None:                       # 累计缺失时退而用周期
+        size, used, remain = cyc
+        return size, used, remain, True, diverged, views
+    return 0.0, 0.0, 0.0, False, diverged, views
+
+
 def _parse_expire(cycle_end, deduction_end):
     if cycle_end:
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
@@ -568,16 +627,19 @@ def parse_accounts(accounts):
     now_ts = time.time() * 1000
     packages = []
     for a in accounts:
-        remain = _num(a.get("CapacityRemainPrecise") or a.get("CapacityRemain"))
-        size = _num(a.get("CapacitySizePrecise") or a.get("CapacitySize"))
-        used = _num(a.get("CapacityUsedPrecise") or a.get("CapacityUsed"))
+        key, label = classify(a)
+        size, used, remain, cycle_based, diverged, views = _pick_capacity(a, key)
         cycle_end = a.get("CycleEndTime", "")
         exp_ts = _parse_expire(cycle_end, a.get("DeductionEndTime"))
         expired = exp_ts is not None and exp_ts < now_ts
-        key, label = classify(a)
         packages.append({
             "key": key, "label": label, "name": a.get("PackageName", ""),
             "remain": remain, "size": size, "used": used,
+            # 订阅型存在两套口径：生效值 + 两组留档（供 UI 标注与悬浮对照）
+            "cycle_based": cycle_based,
+            "diverged": diverged,
+            "remain_cum": (views["cum"] or (None, None, None))[2],
+            "remain_cyc": (views["cyc"] or (None, None, None))[2],
             "cycle_end": cycle_end, "cycle_start": a.get("CycleStartTime", ""),
             "resource_id": a.get("ResourceId", ""),
             "exp_ts": exp_ts,
@@ -608,16 +670,15 @@ def summarize(packages):
 
 # ---------- 积分包生命周期（L6）解析 / 浪费分析 ----------
 def parse_pkg_lifecycle(raw_accounts, status_kind="valid"):
-    """把 L6 的 Accounts[] 规整成统一结构（金额口径与 parse_accounts 一致，取 Precise 优先）。
+    """把 L6 的 Accounts[] 规整成统一结构（容量口径与 parse_accounts 共用 _pick_capacity）。
 
     status_kind: "valid" / "expired"，用于标注页签归属。
     """
     now_ts = time.time() * 1000
     out = []
     for a in raw_accounts or []:
-        size = _num(a.get("CapacitySizePrecise") or a.get("CapacitySize"))
-        used = _num(a.get("CapacityUsedPrecise") or a.get("CapacityUsed"))
-        remain = _num(a.get("CapacityRemainPrecise") or a.get("CapacityRemain"))
+        ctype = int(_num(a.get("CapacityType")))
+        size, used, remain, cycle_based, diverged, _views = _pick_capacity(a, ctype)
         cycle_end = a.get("CycleEndTime") or ""
         deduction_end = a.get("DeductionEndTime")
         exp_ts = _parse_expire(cycle_end, deduction_end)
@@ -634,12 +695,13 @@ def parse_pkg_lifecycle(raw_accounts, status_kind="valid"):
             "package_code": a.get("PackageCode", ""),
             "name": a.get("PackageName", ""),
             "size": size, "used": used, "remain": remain,
+            "cycle_based": cycle_based, "diverged": diverged,
             "status": st, "status_label": status_label,
             "cycle_end": cycle_end,
             "expired_time": a.get("ExpiredTime"),
             "deduction_end": deduction_end,
             "exp_ts": exp_ts,
-            "capacity_type": int(_num(a.get("CapacityType"))),
+            "capacity_type": ctype,
             "resource_id": a.get("ResourceId", ""),
             "kind": status_kind,
             "wasted": round(max(0.0, remain), 4) if status_kind == "expired" else 0.0,
@@ -693,8 +755,13 @@ def req_daily(rows):
 
 
 def req_hourly(rows):
-    """从请求流水（L5）聚合逐小时消耗（日期 × 小时），供热力图。"""
-    grid = {}
+    """从请求流水（L5）聚合逐小时消耗（日期 × 小时）。
+
+    ⚠️ 返回结构**必须**与 compute_usage_hourly() 保持一致：[{date, hour, credit}]。
+    否则 usage_hourly 字段会在「L5 可用 / 不可用」两条分支下变成不同类型
+    （历史上是 dict-grid vs list 的分歧，下游一旦消费就直接崩）。
+    """
+    cells = {}
     for r in rows or []:
         rt = r.get("requestTime") or ""
         if len(rt) < 13:
@@ -704,9 +771,11 @@ def req_hourly(rows):
             hi = int(h)
         except Exception:
             continue
-        slot = grid.setdefault(d, [0.0] * 24)
-        slot[hi] = round(slot[hi] + _num(r.get("credit")), 4)
-    return grid
+        if not 0 <= hi <= 23:      # 防御：时间串异常时不要产生非法小时格（24 格热力图会错位）
+            continue
+        cells[(d, hi)] = round(cells.get((d, hi), 0.0) + _num(r.get("credit")), 4)
+    return [{"date": d, "hour": h, "credit": cells[(d, h)]}
+            for d, h in sorted(cells)]
 
 
 def req_breakdown(rows, field):
@@ -1042,7 +1111,14 @@ def usage_daily(usage):
 
 
 def usage_heatmap(usage):
-    """按 (日期, 小时) 聚合消耗（会话最后更新时间归小时），返回 [{date, hour, credit}]。"""
+    """按 (日期, 小时) 聚合消耗（会话最后更新时间归小时），返回 [{date, hour, credit}]。
+
+    ⚠️ 数据源是 **L1 本地会话库**（`session_usage`），按「会话最后更新时刻」归小时 ——
+    一个跨小时的会话会把全部消耗记在最后一次更新的那一小时，且受本地库「包到账被误算成
+    消耗」的伪增量影响。`build_dashboard_data()` **已不再用它**：小时维度统一走
+    `req_hourly()` / `compute_usage_hourly()`（L5 优先、L2 兜底，按真实请求时间归集）。
+    保留此函数仅为兼容可能的外部调用，新代码请勿再使用。
+    """
     cells = {}
     for u in usage:
         if not u["updated_at"]:
@@ -1241,9 +1317,13 @@ def compute_usage_hourly(hist):
             if prev_used is not None:
                 delta = used - prev_used
                 if delta > 1e-9:
-                    d = s[:10]
-                    h = int(s[11:13])
-                    cells[(d, h)] = cells.get((d, h), 0.0) + delta
+                    h = None
+                    try:
+                        h = int(s[11:13])
+                    except (ValueError, IndexError):
+                        h = None
+                    if h is not None and 0 <= h <= 23:   # 同 req_hourly：拒绝非法小时
+                        cells[(s[:10], h)] = cells.get((s[:10], h), 0.0) + delta
             prev_used = used
     return [{"date": d, "hour": h, "credit": round(cells[(d, h)], 4)}
             for d, h in sorted(cells)]
@@ -1562,7 +1642,7 @@ _PANEL_KEYS = {
         "total_remain", "avail_count", "total_used", "today_used",
         "today_used_l5", "today_used_l2", "usage_source", "days_left", "daily_avg",
         "checkin", "usage_daily", "income_daily", "ledger", "usage_sessions",
-        "expiry_list", "sources_health",
+        "expiry_list", "capacity_note", "sources_health",
     ),
     # 消耗明细：请求级大表 + 三项构成 + 对账；顺带回带 KPI 卡依赖的 L5 口径字段
     "requests": (
@@ -1663,9 +1743,22 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     expiry_list = [
         {"label": p["label"], "name": p["name"], "remain": p["remain"],
          "size": p["size"], "used": p["used"], "cycle_end": p["cycle_end"],
+         "cycle_based": p.get("cycle_based", False),
+         "diverged": p.get("diverged", False),
+         "remain_cum": p.get("remain_cum"),
          "status": "可用" if p["available"] else ("已过期" if p["expired"] else "已用完")}
         for p in ordered
     ]
+
+    # 口径说明：订阅型（套餐用量）改用本周期口径后，若某些包两组口径不一致，
+    # 这里给出「若改用累计口径会多算多少」—— 便于页面对账与自证。
+    diverged_pkgs = [p for p in packages if p.get("diverged")]
+    capacity_note = {
+        "cycle_based_count": sum(1 for p in packages if p.get("cycle_based")),
+        "diverged_count": len(diverged_pkgs),
+        "delta_if_cumulative": round(sum(
+            (_num(p.get("remain_cum")) - p["remain"]) for p in diverged_pkgs), 4),
+    }
 
     # 累计消耗与今日消耗
     total_used = round(sum(p["used"] for p in packages), 4)
@@ -1742,8 +1835,10 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         for u in sorted(usage, key=lambda x: x["updated_at"] or 0, reverse=True)
     ]
 
-    # 热力图数据（日期 × 小时）
-    heatmap = usage_heatmap(usage)
+    # 小时维度热度数据：与 usage_hourly **同源同构**（L5 优先、L2 兜底）。
+    # 早先用 usage_heatmap(usage)（L1 本地会话库，按「会话最后更新时间」归小时），
+    # 与 usage_daily / usage_hourly 的口径不一致，且受本地库伪增量影响 —— 已废弃。
+    heatmap = uhourly
 
     # ---- 自积累账本（签到合并 + 包到账对比 ResourceId）----
     checkin_dates_raw = st.get("checkin_dates", [])
@@ -1799,8 +1894,14 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
                          % (st.get("streak_days", 0), daily_credit_val))
     summary = "，".join(summary_parts) + "。"
 
-    # 今日已使用：逐包日内差值（免疫签到/裂变/过期），刷新即可响应
-    today_used = compute_today_used(usage_hist)
+    # 今日已使用：直接沿用上面「L5 优先、L2 兜底」的结果（与 usage_source 标注一致）。
+    #
+    # ⚠️ 不要在这里再调 compute_today_used() 覆盖 —— 曾经就是这么写的，导致：
+    #   ① 口径错位：KPI 显示的是 L2 采样值，副标题却按 usage_source 标成「服务端流水口径」
+    #   ② 系统性低估：L2 逐包差值只统计「今日**首个采样点**之后」的增量，而采样点由页面
+    #      刷新/服务请求产生 —— 当天第一次打开工作台之前的消耗没有基准，全被漏掉。
+    #      实测 2026-09-16：L5 说 9.66，L2 只算出 0.74（首个采样点 13:12，此前消耗无基准）。
+    #   ③ L5 才是服务端流水、精确到请求，本就是既定主口径（见 usage_source 与对账设计）。
 
     data = {
         "version": VERSION,                 # 技能版本（来自 manifest.yaml，工作台页头展示）
@@ -1813,6 +1914,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
             for g in groups
         ],
         "total_remain": round(sum(g["remain_sum"] for g in groups), 4),
+        "capacity_note": capacity_note,     # 订阅型口径切换的说明（含"若用累计会多算多少"）
         "total_used": total_used,
         "today_used": today_used,
         "today_used_l5": today_used_l5,

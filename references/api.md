@@ -102,7 +102,9 @@ POST https://copilot.tencent.com/billing/meter/get-user-resource-free-packages  
 - **缺 `User-Agent` → HTTP 403 `code:10085`「请求不合法」**（连老接口也一样）
 - `PageSize` 上限 200；过滤 `CapacityType == 4`
 
-响应 `data.TotalCount` + `data.Accounts[]`；字段 `PackageName` / `PackageCode` / `CapacitySize` / `CapacityUsed` / `CapacityRemain` / `Status` / `DeductionEndTime` / `ExpiredTime` / `CycleEndTime`。
+响应 `data.TotalCount` + `data.Accounts[]`；字段 `PackageName` / `PackageCode` / `CapacitySize` / `CapacityUsed` / `CapacityRemain` / `CycleCapacitySize` / `CycleCapacityUsed` / `CycleCapacityRemain` / `Status` / `DeductionEndTime` / `ExpiredTime` / `CycleEndTime`。
+
+> 容量字段有两套口径（累计 / 本周期），订阅型（`CapacityType=4`）会分叉，详见「两套容量口径」一节。
 
 **意义**：过期浪费分析改由该权威接口直出，不再依赖本地快照差分推算。老接口 `get-user-resource` **完全不返回已过期包**，因此旧口径的「已过期损失」恒为 0。
 
@@ -178,13 +180,34 @@ User-Agent: Mozilla/5.0        ← 关键：缺此头部分接口返回 403 code
 |------|------|
 | `CapacityType` | 类型：`4`=个人体验版（套餐用量）、`1`=权益赠送包（运营裂变包）、其余=加量包等 |
 | `PackageName` | 包名（如 `CodeBuddy个人体验版`、`CodeBuddy个人版国内运营裂变包`） |
-| `CapacityRemainPrecise` | 剩余积分（精确字符串，优先用；Fallback `CapacityRemain`） |
-| `CapacitySizePrecise` | 总量（精确字符串；Fallback `CapacitySize`） |
-| `CapacityUsedPrecise` | 已用（精确字符串；Fallback `CapacityUsed`） |
+| `CapacityRemainPrecise` | **累计**剩余积分（精确字符串，优先用；Fallback `CapacityRemain`） |
+| `CapacitySizePrecise` | **累计**总量（精确字符串；Fallback `CapacitySize`） |
+| `CapacityUsedPrecise` | **累计**已用（精确字符串；Fallback `CapacityUsed`） |
+| `CycleCapacityRemainPrecise` | **本周期**剩余积分（精确字符串；Fallback `CycleCapacityRemain`） |
+| `CycleCapacitySizePrecise` | **本周期**总量（精确字符串；Fallback `CycleCapacitySize`） |
+| `CycleCapacityUsedPrecise` | **本周期**已用（精确字符串；Fallback `CycleCapacityUsed`） |
 | `CycleStartTime` | 周期开始（字符串 `YYYY-MM-DD HH:MM:SS`） |
 | `CycleEndTime` | 到期时间（字符串 `YYYY-MM-DD HH:MM:SS`） |
 | `DeductionEndTime` | 扣减结束时间戳（毫秒，可作到期时间兜底） |
+| `TotalCycles` / `RemainCycles` | 总周期数 / 剩余周期数（**注意**：`RemainCycles=0` 不等于「周期额度用尽」，实测有套餐剩余 500 但该字段为 0，勿据此判定） |
 | `ResourceId` | 资源包唯一 ID |
+
+### ⚠️ 两套容量口径：订阅型必须用周期口径
+
+同一条记录会**同时**返回上面两组容量字段。对**订阅型资源**（`CapacityType == 4`，套餐用量）
+两组会**分叉**，且服务端的累计字段不可信：
+
+| 实测样本（`CodeBuddy个人体验版`） | 累计口径 | 周期口径 |
+|---|---|---|
+| 总量 / 已用 / 剩余 | 500 / **0** / **500** | 500 / **500** / **0** |
+| 官网「套餐与用量」显示 | — | 已用 500/500、**0 剩余** |
+
+判据：**周期区间是累计区间的子集，累计已用不可能小于周期已用**。上面 `0 < 500` 自相矛盾，
+说明服务端对订阅型的累计字段**不随周期消耗更新**（停留在重置后的初值），会把已用光的套餐
+算成满额。官网按周期口径渲染（旁证：官网「下次权益周期更新时间」= `CycleEndTime`）。
+
+结论：**`CapacityType == 4` 取 `CycleCapacity*` 作为当前可用**；其余类型（赠送包/加量包）
+实测两组一致，沿用累计口径。若一组字段整体缺失则回退到另一组。
 
 ## 分类逻辑
 
