@@ -16,6 +16,43 @@
 - `auth.domain`：`www.codebuddy.cn`（仅用于签到类接口）
 - `account.uid`：用户唯一 ID（请求头 `X-User-Id` 用）
 
+## 取数通道（v1.5.0 起：浏览器桥）
+
+**先读这节**：客户端已把凭据加密落盘（`$wbEncrypted` + AES-GCM 封套），
+本技能不再直连 API，也读不到明文凭据。
+
+| 项 | 说明 |
+|---|---|
+| 通道 | Playwright 持久化 profile 的 Chrome（窗口在屏幕外），在页面上下文里 `fetch(credentials:'include')` |
+| 域名 | `https://www.workbuddy.cn`（**替代**旧的 `copilot.tencent.com` 与 `www.codebuddy.cn/v2`） |
+| 鉴权 | HttpOnly `session` cookie（浏览器自动携带）——**不需要** `Authorization: Bearer` |
+| 凭据 | 始终留在浏览器内；本进程不接触、不解析、不落盘 |
+| profile | `~/.workbuddy/workbuddy-credits-data/browser_profile` |
+
+**路径对应关系**（换域名后「同名同结构」，解析逻辑未改）：
+
+| 旧 | 新 |
+|---|---|
+| `copilot.tencent.com/billing/meter/get-user-resource` | `www.workbuddy.cn/billing/meter/get-user-resource` |
+| `copilot.tencent.com/billing/meter/get-user-request-usage` | `www.workbuddy.cn/billing/meter/get-user-request-usage` |
+| `copilot.tencent.com/billing/meter/get-user-resource-{paid,free}-packages` | 同名 |
+| `www.codebuddy.cn/v2/billing/meter/checkin-activity-status` | `www.workbuddy.cn/billing/meter/checkin-activity-status` |
+
+**新增可用**：`/billing/meter/get-user-resource-summary` —— 包级**周期口径**汇总
+（`data.Packages[]`：`PackageCode` / `CycleTotalCapacity` / `CycleRemainCapacity` /
+`CycleUsedCapacity` / `CycleFrozenCapacity` / `TotalCount`），可作交叉校验；
+其返回的 `PackageCode` 也可直接用于给 `paid/free-packages` 传参（比硬编码白名单更健壮）。
+
+**三条铁律**：
+
+1. **绝不用 headless** —— 同一 profile 混用 headful/headless 会让会话**凭空消失**（实测：
+   cookie 没了、全部 401）。"无头"用 `--window-position=-32000,-32000` 实现
+2. **网关层 HTML 401 = 会话过期**（openresty 返回），≠ 业务错误（业务错误是 JSON `code:xxxx`）
+3. **会话 7 天绝对过期、不滑动续期**（实测请求前后 `expires` 未变）→ 过期后弹窗重新登录
+
+> 下面「接口清单」中的路径均为**相对路径**（桥模式下统一拼在 `/billing/meter` 之后）；
+> 请求头一节仅适用于 `WORKBUDDY_TRANSPORT=direct` 的历史直连模式。
+
 ## 接口清单
 
 ### 1. 积分资源包查询（核心）

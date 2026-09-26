@@ -8,7 +8,7 @@ agent_created: true
 
 ## 概述
 
-读取本机 WorkBuddy 登录态文件（含 `accessToken` / `uid`），直接调用官方积分接口，提供积分查询、签到（命令行或工作台按钮，无需打开 WorkBuddy）、余额快照、过期浪费分析，以及一个可视化工作台（`dashboard.html`）。
+借**官网已登录的浏览器会话**（独立 profile 的 Chrome，窗口落在屏幕坐标系外）调用官方积分接口，提供积分查询、签到（命令行或工作台按钮，无需打开 WorkBuddy）、余额快照、过期浪费分析，以及一个可视化工作台（`dashboard.html`）。凭据（HttpOnly `session` cookie）始终留在浏览器内，本技能不接触明文。
 
 ## 如何打开工作台（常用入口）
 
@@ -133,6 +133,12 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 > **小时维度同源约定**：`usage_hourly` 与 `usage_heatmap` 必须**同源同构**（`[{date, hour, credit}]`，
 > L5 优先、L2 兜底）。不要再改回 `usage_heatmap()` —— 它走 L1 本地会话库（按会话最后更新时刻归小时），
 > 与 L5 口径冲突，且会让 `usage_hourly` 字段在两条分支下变成不同类型。
+>
+> **「预计可用天数」用 30 天窗口 + 不估算护栏**（v1.4.4）：`DAILY_AVG_WINDOW_DAYS = 30`
+> （7 天太短，会被「最近一周恰好没怎么用」主导 —— 实测近 7 天日均 0.59 →「9473 天」，
+> 近 30 天 77.74 →「72 天」✓）；`DAYS_LEFT_MIN_AVG = 1.0` 以下不估算、页面显示 `—`，
+> 副标题给出 `active_days_30d`（仅 N 天有消耗）说明是样本稀而非数据缺失。
+> **不要改成「剔除低消耗日再平均」** —— 那会引入主观阈值，且样本易为空。
 
 图表库 `assets/echarts.min.js` 已离线内置，无需联网。
 
@@ -146,13 +152,38 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 **签到入口已统一收敛到工作台**，本 skill 不再部署任何定时任务。详见 `references/checkin.md`。
 
-工作台概览区显示**登录态有效期**（`accessToken` 剩余天数）：剩余 ≤7 天时卡片转警示色并提示「打开一次 WorkBuddy 可续期」；已过期时提示「打开一次 WorkBuddy 即可恢复」。登录态来自本机文件，只要 token 未过期，工作台即可脱离 WorkBuddy 独立完成查询与签到。
+工作台概览区显示**浏览器会话**的剩余天数（桥模式）：剩余 ≤2 天时卡片转警示色并提示「到期前需重新登录一次」；已过期时显示「已过期」，并在页面上方给出提示条与「**重新登录**」按钮。会话来自浏览器（HttpOnly `session` cookie，**7 天绝对过期**），登录后**无需重启工作台**。
 
 ### 3. 关键前提
 
-- 已登录 WorkBuddy 客户端，登录态文件存在且 `accessToken` 未过期。
-- 有效期：`accessToken` 约 **60 天**，`refreshToken` 约 **90 天**且随每次刷新滚动。失效后**打开一次 WorkBuddy**（启动即自动刷新登录态并写回文件）即可恢复，无需重新扫码；仅当 `refreshToken` 也已过期才需重新登录。
-- 脚本按平台自动定位登录态文件（Windows / macOS / Linux）。
+> **取数通道 = 浏览器桥（v1.5.0 起）—— 排查故障先看这条**
+> 客户端已把凭据加密落盘（`auth.accessToken` 变为 AES-GCM 封套，密钥在客户端内），
+> 本技能拿不到明文 token。因此不再直连 API，改为借**官网已登录的浏览器会话**取数：
+> 一个独立 profile 的 Chrome 在 `www.workbuddy.cn` 页面上下文里发
+> `fetch(credentials:'include')`，HttpOnly `session` cookie 由浏览器自动携带。
+>
+> - **凭据不落本进程**：`session` cookie 全程留在浏览器内
+> - **profile**：`~/.workbuddy/workbuddy-credits-data/browser_profile`
+> - **会话 7 天绝对过期、不滑动续期**（实测请求前后 `expires` 一字未变）
+>   → 到期后页面给提示条 +「重新登录」按钮
+> - **绝不用 headless**：同一 profile 混用 headful/headless 会让会话**凭空消失**
+>   （cookie 没了、全部 401 —— 极易误判成"服务端踢了会话"）。"无头"用
+>   `--window-position=-32000,-32000`，用户看不到窗口
+> - 接口「**同名同结构**」：`www.workbuddy.cn/billing/meter/*`，与旧 `copilot.tencent.com`
+>   路径一致、字段一致，**解析层未改**
+> - **网关层 HTML 401 = 会话过期**，不是接口被封；业务错误才是 JSON `code:xxxx`
+>
+> **不要误判为「接口被封 / 网络不通」**。
+
+- 首次使用需在弹出的浏览器窗口里**登录一次**；之后长期自动，约每 7 天一次。
+- **运行解释器必须装了 Playwright**（浏览器桥的硬依赖）。双击启动器会**自动探测**
+  （同目录 → PATH → 注册表 → py launcher），挑一个装了的解释器来跑 `serve.py`；
+  手动 `python scripts/serve.py` 时请自行确认当前解释器有 `playwright`。
+  ⚠️ **WorkBuddy 内置 Python 通常没有 Playwright**，系统 Python 通常有 ——
+  用内置解释器跑会出现「面板一直转圈」；v1.5.0 起桥会**快速失败**并明确报
+  「当前 Python 解释器未安装 Playwright」，不再卡住。
+- 安装只需一步：`pip install playwright`（浏览器**直接用系统 Chrome**，无需 `playwright install`）。
+- 旧的直连方式保留在 `WORKBUDDY_TRANSPORT=direct` 下，仅在凭据恢复明文时有意义。
 
 ### 4. 安全约束（重要）
 
@@ -161,6 +192,17 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 - **提示词永不落盘**：请求级消耗明细中的 `input` / `inputTrunc` 字段只存在于接口响应的内存中，供工作台实时展示；`render` 与 `serve.py` 的静态通道都会在写入前强制剥离该字段（`strip_prompts` 硬约束）。落盘数据只保留 `requestId` / 时间 / 积分 / 模型 / 客户端 / 用途。
 
 ## 签到与提醒机制
+
+> **两个「连续天数」别混用（v1.4.4）**：接口的 `streak_days` 是**当前活动周期内**的签到天数
+> （实测 `checkin_dates` 起点与 `start_time` 重合、长度等于 `streak_days`，活动一换即归零重算）；
+> 跨周期**真实连续**由 `compute_real_streak()` 得出，输出 `checkin.real_streak_days`。
+> 页面：「今日签到」卡用真实连续，「签到活动」卡用周期内天数。
+>
+> **真实连续的三个数据来源**：① 接口当期 `checkin_dates` ② 本地累积 `checkin_history.json`
+> ③ **从 L6 资源包反推**（`derive_checkin_dates()`：签到奖励以「size = 当日奖励额」的散包到账，
+> `CycleStartTime` 即签到日；奖励额调整过的历史档位登记在 `CHECKIN_CREDIT_ALIASES`）。
+> ③ 是关键 —— 接口只给当期、本地累积从首次调用才开始，**只有服务端包记录能跨设备回溯更早历史**。
+> **局限**：包被清理后无法回溯，故该值是**下界**（只会少算）。
 
 **不再部署定时任务。** 签到与到期提醒全部收敛到工作台：打开工作台 → 未签到则弹框引导 → 点「立即签到」即完成并自动刷新；到期批次同样在首次加载时弹框提示。
 
@@ -179,6 +221,9 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 
 完整接口文档（端点、请求头、字段映射、关键坑）见 `references/api.md`。排查 401/403 或扩展字段时，先读该文件。
 
+**改动本项目之前，建议先读 `references/dev-notes.md`** —— 那里记着「关键约束（勿推翻）」、
+环境踩坑与发布流程。**与本项目相关的记忆、规则一律写在该文件里**（跟着仓库走，不写工作区）。
+
 ## 资源
 
 - `scripts/workbuddy_credits.py` —— 核心脚本（查询/签到/快照/分析/渲染/账本自积累/请求流水 L5/包生命周期 L6/对账）
@@ -192,6 +237,8 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 - `assets/echarts.min.js` —— 离线图表库
 - `references/api.md` —— 接口端点、请求头、响应字段、分层口径与关键坑说明
 - `references/checkin.md` —— 签到机制与自动化说明（为何不用定时任务、可选替代方案）
+- `references/dev-notes.md` —— **开发笔记 / 项目长期记忆**：设计约束（勿推翻）、环境踩坑、
+  发布流程、当前状态。**与本项目相关的记忆与规则一律记在这里**（跟着仓库走，跨设备可见）
 
 ## 本地数据文件（`~/.workbuddy/workbuddy-credits-data/`）
 

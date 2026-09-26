@@ -21,6 +21,7 @@
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -169,8 +170,110 @@ def _stop_stale_server():
     return not _port_in_use()
 
 
+def _python_has_playwright(exe):
+    """探测某解释器是否装了 Playwright（浏览器桥的硬依赖）。"""
+    if not exe:
+        return False
+    if (os.path.sep in exe or ":" in exe) and not os.path.exists(exe):
+        return False
+    try:
+        kw = {"capture_output": True, "timeout": 60}
+        if sys.platform == "win32":
+            kw["creationflags"] = _NO_WINDOW
+        return subprocess.run([exe, "-c", "import playwright"], **kw).returncode == 0
+    except Exception:
+        return False
+
+
+def _registry_pythons():
+    """从注册表列出已安装 Python 的 python.exe（Windows；失败返回空表）。"""
+    if sys.platform != "win32":
+        return []
+    try:
+        import winreg
+    except Exception:
+        return []
+    out = []
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for sub in (r"SOFTWARE\Python\PythonCore",
+                    r"SOFTWARE\WOW6432Node\Python\PythonCore"):
+            try:
+                with winreg.OpenKey(root, sub) as k:
+                    for i in range(winreg.QueryInfoKey(k)[0]):
+                        try:
+                            ver = winreg.EnumKey(k, i)
+                            with winreg.OpenKey(k, ver + r"\InstallPath") as ik:
+                                out.append(os.path.join(
+                                    winreg.QueryValueEx(ik, "")[0], "python.exe"))
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+    return out
+
+
+def _candidate_interpreters():
+    """按优先级列出候选解释器。
+
+    `python.exe` 排在 `pythonw.exe` 前面 —— 带控制台的解释器里 Playwright 跑得更稳，
+    出错也更容易落进日志。
+    """
+    seen, out = set(), []
+
+    def add(p):
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+
+    d = os.path.dirname(sys.executable)
+    add(os.path.join(d, "python.exe"))
+    add(os.path.join(d, "pythonw.exe"))
+    add(sys.executable)
+    for name in ("python", "pythonw", "python3"):
+        try:
+            add(shutil.which(name))
+        except Exception:
+            pass
+    for base in _registry_pythons():
+        add(base)
+        add(os.path.join(os.path.dirname(base), "pythonw.exe"))
+    return out
+
+
+def _find_serve_python():
+    """挑一个**装了 Playwright** 的解释器来跑 serve.py。
+
+    为什么需要这一步：双击启动器时，launcher 往往由 WorkBuddy 内置 pythonw 执行，
+    而 Playwright 多数装在系统 Python 里 —— 直接沿用内置解释器会让浏览器桥起不来，
+    页面表现为「三个面板一直转圈」。所以这里主动探测，而不是想当然用 sys.executable。
+    """
+    for exe in _candidate_interpreters():
+        if _python_has_playwright(exe):
+            return exe
+    return None
+
+
+def _notify(msg):
+    """双击场景没有控制台 —— 弹系统提示框，否则用户只看到「转圈」而无从得知原因。"""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, msg, "积分工作台 · 启动失败", 0x30)
+            return
+        except Exception:
+            pass
+    print(msg, file=sys.stderr)
+
+
 def _spawn():
-    subprocess.Popen([_find_pythonw(), SERVE, str(PORT)], **_detach_kwargs())
+    """拉起 serve.py。返回 (是否成功, 所用解释器路径 或 失败说明)。"""
+    exe = _find_serve_python()
+    if not exe:
+        return False, ("未找到安装了 Playwright 的 Python 解释器 —— 浏览器桥依赖它取数。\n\n"
+                       "请在命令行执行一次：\n    pip install playwright\n\n"
+                       "（浏览器直接用系统 Chrome，无需再下载内核）")
+    subprocess.Popen([exe, SERVE, str(PORT)], **_detach_kwargs())
+    return True, exe
 
 
 def _wait_ready(want, tries=24):
@@ -212,7 +315,12 @@ def _ensure_running():
         print("找不到 serve.py：%s" % SERVE, file=sys.stderr)
         return False
 
-    _spawn()
+    ok, info = _spawn()
+    if not ok:
+        print(info, file=sys.stderr)
+        _notify(info)
+        return False
+    print("服务解释器：%s" % info)
     return _wait_ready(want)
 
 

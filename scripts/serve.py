@@ -15,6 +15,7 @@ serve.py —— 积分工作台本地服务：提供可刷新的工作台。
   GET /api/lifecycle        包生命周期：有效期内 / 已过期 + 权威浪费
   GET /api/data             全量（兼容旧调用方与静态导出）
   GET /api/checkin          执行签到（幂等）
+  GET /api/relogin          会话过期时弹出浏览器窗口重新登录（最长阻塞约 5 分钟）
   GET /api/create-shortcut  创建桌面 / 开始菜单快捷方式
   GET /dashboard_data.js    静态数据（**已剥离提示词**，供 file:// 模式）
 
@@ -30,6 +31,7 @@ serve.py —— 积分工作台本地服务：提供可刷新的工作台。
       任何落盘通道（dashboard_data.js / render 产物）都必须先过 strip_prompts()。
 """
 
+import atexit
 import json
 import os
 import sys
@@ -141,8 +143,16 @@ HUB = SourceHub()
 
 
 def _auth_status(auth_path):
-    """读取登录态剩余有效期，供页面提示。
-    只返回到期时间与剩余天数，不暴露 token 明文。"""
+    """读取登录态剩余有效期，供页面提示。只返回到期时间与剩余天数，不暴露 token 明文。
+
+    桥模式下凭据不在本机（在浏览器里），改为读**浏览器会话 cookie 的到期时间** ——
+    同样只要元信息，不碰凭据值。桥未启动时返回 None（不为了读 cookie 去拉起浏览器）。
+    """
+    if wc.bridge_enabled():
+        info = wc.bridge_session_info()
+        if not info:
+            return {"kind": "browser", "note": "浏览器会话（桥未启动）"}
+        return info
     try:
         with open(auth_path, "r", encoding="utf-8") as f:
             d = json.load(f)
@@ -168,8 +178,22 @@ def _auth_status(auth_path):
 def _login():
     login = wc.load_login()
     if not login:
-        return None, {"error": "未找到 WorkBuddy 登录态，请先登录客户端。"}
+        # 区分「未登录」与「凭据已被客户端加密」—— 两者的用户动作完全不同，
+        # 混成一句「请先登录客户端」会让明明已登录的用户一头雾水。
+        kind, reason = wc.auth_diagnosis()
+        return None, {"error": reason or "未找到 WorkBuddy 登录态，请先登录客户端。",
+                      "auth_status_kind": kind}
     return login, None
+
+
+def _err_payload(err):
+    """统一错误响应体。桥模式下若因会话过期失败，带上可操作标记 ——
+    前端据此显示「点此重新登录」，而不是丢一句看不懂的错误。"""
+    out = {"error": err}
+    if wc.bridge_enabled() and wc.SESSION_STATE.get("expired"):
+        out["auth_status_kind"] = "session_expired"
+        out["can_relogin"] = True
+    return out
 
 
 def build_json(fresh_all=False):
@@ -181,7 +205,7 @@ def build_json(fresh_all=False):
     fresh = ("resource", "checkin", "l5", "l6") if fresh_all else ()
     data, err = wc.build_dashboard_data(token, uid, account, hub=HUB, fresh=fresh)
     if err:
-        return {"error": err}
+        return _err_payload(err)
     data["auth_status"] = _auth_status(auth_path)
     return data
 
@@ -196,7 +220,7 @@ def build_panel_json(panel, fresh=False):
     t0 = time.perf_counter()
     data, err = wc.build_panel(panel, token, uid, account, hub=HUB, fresh=keys)
     if err:
-        return {"error": err}
+        return _err_payload(err)
     data["auth_status"] = _auth_status(auth_path)
     data["elapsed_ms"] = int((time.perf_counter() - t0) * 1000)
     return data
@@ -275,6 +299,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": ok, "message": msg}, 200 if ok else 400)
         elif path == "/api/checkin":
             self._send_json(do_checkin())
+        elif path == "/api/relogin":
+            # 会阻塞到用户登录完成（最长 wait_seconds）。threading server 每请求一线程，
+            # 不会拖住其他请求；前端把该请求的超时放宽到 6 分钟。
+            ok, msg = wc.bridge_relogin()
+            HUB.invalidate()
+            self._send_json({"ok": ok, "message": msg,
+                             "auth_status": _auth_status(None)}, 200 if ok else 400)
         elif path == "/dashboard_data.js":
             # 落盘/静态通道：必须剥离提示词（与 cmd_render 同一硬约束）
             data = build_json()
@@ -298,12 +329,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass  # 静默访问日志
 
 
+def _warmup():
+    """预热浏览器桥：服务刚起来时，后台把 Chrome 拉起、四源取一遍填进缓存。
+
+    为什么值得做：桥用的 Chrome **冷启动要 3~5s**，而双击启动器后用户马上就会打开页面 ——
+    与其让首屏干等这一段，不如趁用户切窗口的几秒把它热好。
+    后台线程，失败静默，不影响服务本身。
+    """
+    time.sleep(2)                    # 先把端口让出来，确保页面能立刻连上
+    try:
+        login, err = _login()
+        if err:
+            return
+        token, uid, account, _path = login
+        wc.build_dashboard_data(token, uid, account, hub=HUB,
+                                fresh=("resource", "checkin", "l5", "l6"))
+    except Exception:
+        pass
+
+
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8090
+    # 进程退出时关掉浏览器桥（懒加载启动的那个 Chrome，窗口在屏幕外）
+    atexit.register(wc.bridge_close)
     with socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler) as httpd:
         print("积分工作台服务已启动：http://127.0.0.1:%d  （Ctrl+C 停止）" % port)
         print("  版本 %s ｜ 面板接口：/api/overview、/api/requests、/api/lifecycle"
               % wc.VERSION)
+        print("  取数通道：%s" % (
+            "浏览器桥（首次取数时启动浏览器，窗口在屏幕外；会话约 7 天过期）"
+            if wc.bridge_enabled() else "直连 API"))
+        # 预热：后台拉起浏览器 + 预取四源，免得首屏干等 3~5s 冷启动
+        threading.Thread(target=_warmup, name="wb-warmup", daemon=True).start()
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

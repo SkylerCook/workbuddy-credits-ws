@@ -42,6 +42,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import sqlite3
 import urllib.request
@@ -79,6 +80,11 @@ API_PKG_FREE = "/get-user-resource-free-packages"
 API_CHECKIN_BASE = "https://www.codebuddy.cn/v2/billing/meter"
 API_CHECKIN_STATUS = "/checkin-activity-status"
 API_DAILY_CHECKIN = "/daily-checkin"
+
+# 账号信息（昵称 / 角色）。**注意不在 `/billing/meter` 前缀下** —— 是站点级路径，
+# 所以桥模式下直接用完整路径请求。旧版从本机登录态文件的 `account` 段读，
+# 凭据加密后改为走这个接口。
+ACCOUNT_PATH = "/console/account"
 
 # CapacityType -> 分类
 #   4 = 个人体验版（套餐基础用量）；1 = 权益赠送包（运营裂变包）；其余 = 加量包/其他
@@ -138,6 +144,86 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DASHBOARD_DATA_FILE = os.path.join(SKILL_DIR, "dashboard_data.js")
 
 
+# ---------- 取数通道 ----------
+# 2026-09-26 起：客户端凭据已**加密落盘**（`$wbEncrypted` + AES-GCM 封套，密钥在客户端内），
+# 直连 API 的 `Authorization: Bearer` 路径失效。默认改走**浏览器桥**：借官网（workbuddy.cn）
+# 已登录的浏览器会话取数 —— HttpOnly cookie 始终留在浏览器内，本进程不接触明文凭据。
+# 置 WORKBUDDY_TRANSPORT=direct 可退回旧的直连实现（仅在凭据恢复明文时有意义）。
+TRANSPORT = os.environ.get("WORKBUDDY_TRANSPORT", "bridge").strip().lower()
+BRIDGE_PREFIX = "/billing/meter"   # 桥模式下所有接口都挂在这个前缀下（换域名后路径同名）
+
+# 会话失效标记：桥返回 401/403 时置位，供 UI 提示「点此重新登录」
+SESSION_STATE = {"expired": False, "at": None, "reason": ""}
+
+_BRIDGE = None
+_BRIDGE_LOCK = threading.Lock()
+
+
+def bridge_enabled():
+    return TRANSPORT == "bridge"
+
+
+def _load_bridge_module():
+    """导入 browser_bridge（与本文件同目录）。兼容 scripts/ 不在 sys.path 的场景。"""
+    try:
+        import browser_bridge
+        return browser_bridge
+    except Exception:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_bridge.py")
+        spec = importlib.util.spec_from_file_location("wb_browser_bridge", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+
+def get_bridge():
+    """惰性创建浏览器桥单例 —— 进程内复用同一个浏览器。
+
+    注意是**懒加载**：首次调用才启动 Chrome（约 3~5s），之后每次取数仅 0.1~0.3s。
+    """
+    global _BRIDGE
+    if _BRIDGE is None:
+        with _BRIDGE_LOCK:
+            if _BRIDGE is None:
+                Bridge = _load_bridge_module().BrowserBridge
+                _BRIDGE = Bridge()
+    return _BRIDGE
+
+
+def bridge_close():
+    """进程退出前关闭浏览器（配合 atexit）。"""
+    global _BRIDGE
+    if _BRIDGE is not None:
+        try:
+            _BRIDGE.close()
+        except Exception:
+            pass
+        _BRIDGE = None
+
+
+def bridge_relogin(wait_seconds=300):
+    """弹出**可见**窗口请用户重新登录。返回 (ok, message)。"""
+    ok, msg = get_bridge().relogin(wait_seconds=wait_seconds)
+    if ok:
+        SESSION_STATE.update(expired=False, at=None, reason="")
+    return ok, msg
+
+
+def bridge_session_info():
+    """桥模式下读取浏览器会话的到期时间（**只读元信息**）。非桥模式返回 None。"""
+    if not bridge_enabled():
+        return None
+    try:
+        info = get_bridge().session_info()
+    except Exception:
+        return None
+    if not info:
+        return None
+    info["kind"] = "browser"
+    return info
+
+
 # ---------- 登录态定位 ----------
 def auth_candidates():
     home = os.path.expanduser("~")
@@ -163,21 +249,72 @@ def auth_candidates():
     return cands
 
 
+# 最近一次 load_login() 失败的原因（供 UI / CLI 给出可操作提示）
+AUTH_FAILURE = {"kind": None, "reason": ""}
+
+
 def load_login():
+    """读取本机登录态，返回 (token, uid, account, path)；不可用时返回 None。
+
+    ⚠️ 2026-09-26 起：WorkBuddy 客户端把凭据**加密落盘**了 —— `auth.accessToken`
+    等字段从明文字符串变成 AES-GCM 封套：
+        {"$wbEncrypted": 1,
+         "envelope": "<base64 of {suite, keyId, nonce, authTag, ciphertext}>"}
+    密钥在客户端内，本技能拿不到明文。此时**明确记录原因并返回 None**，
+    绝不把 dict 当成 token 传下去（否则会在 `"Bearer " + token` 处抛 TypeError，
+    表现为三个面板一起报「can only concatenate str (not "dict") to str」）。
+    调用方若要区分「未登录」与「凭据已加密」，用 auth_diagnosis()。
+    """
+    if bridge_enabled():
+        # 桥模式：凭据由浏览器持有，本进程不需要（也不应持有）明文 token。
+        # 返回占位三元组 —— 这样所有上层调用方（build_dashboard_data / cmd_* / serve.py）
+        # 都无需感知「通道差异」，改动被收敛在传输层这一处。
+        return "", "", {"nickname": "浏览器会话", "type": ""}, "<browser-bridge>"
+    seen_encrypted = False
     for p in auth_candidates():
         if not os.path.exists(p):
             continue
         try:
             with open(p, "r", encoding="utf-8") as f:
                 d = json.load(f)
-            token = (d.get("auth") or {}).get("accessToken", "")
+            auth = d.get("auth") or {}
+            token = auth.get("accessToken", "")
             uid = (d.get("account") or {}).get("uid", "")
+            if isinstance(token, dict) or isinstance(uid, dict):
+                seen_encrypted = True
+                continue
             if not token or not uid:
                 continue
             return token, uid, d.get("account") or {}, p
         except Exception:
             continue
+    if seen_encrypted:
+        AUTH_FAILURE["kind"] = "encrypted"
+        AUTH_FAILURE["reason"] = (
+            "WorkBuddy 客户端已把登录凭据加密落盘（accessToken 为 AES-GCM 封套，字段标记 "
+            "$wbEncrypted）。本技能无法在不解密的前提下读取明文凭据 —— 这不是接口被封，"
+            "而是凭据保护升级。详见 README「凭据与登录态」一节。")
+    else:
+        AUTH_FAILURE["kind"] = AUTH_FAILURE["kind"] or "missing"
+        AUTH_FAILURE["reason"] = AUTH_FAILURE["reason"] or "未找到登录态文件（请先登录 WorkBuddy 客户端）"
     return None
+
+
+def auth_diagnosis():
+    """返回 (status, message)：`ok` / `encrypted` / `missing`。
+
+    为什么要单列 `encrypted`：客户端加密凭据后，技能**不是**「用户没登录」，
+    而是「登录态存在但读不出明文」—— 两者给用户的提示与后续动作完全不同。
+    """
+    if bridge_enabled():
+        if SESSION_STATE["expired"]:
+            return "session_expired", (SESSION_STATE.get("reason")
+                                       or "浏览器会话已过期，请重新登录")
+        return "ok", ""
+    if load_login():
+        return "ok", ""
+    kind = AUTH_FAILURE.get("kind") or "missing"
+    return kind, AUTH_FAILURE.get("reason") or ""
 
 
 # ---------- 通用 API 调用 ----------
@@ -253,7 +390,28 @@ def _run_parallel(tasks, max_workers=8):
     return out
 
 
+def _bridge_call(path, body=None):
+    """走浏览器桥取数。返回 (data, err)，与直连版 `_api_call` 同构。
+
+    桥模式下所有接口都挂在同一个前缀下 —— 换域名后路径同名（实测 `copilot.tencent.com`
+    与 `codebuddy.cn/v2` 的差异**不再存在**），故 `base` 参数被忽略。
+    """
+    try:
+        bridge = get_bridge()
+    except Exception as e:
+        return None, "浏览器桥不可用: %s" % e
+    res = bridge.call(BRIDGE_PREFIX + path, body)
+    if res["ok"]:
+        return res["data"], None
+    if res["kind"] == "session_expired":
+        SESSION_STATE.update(expired=True, at=time.time(), reason=res.get("error") or "")
+        return None, "浏览器会话已过期，请在工作台点「重新登录」后重试"
+    return None, res.get("error") or "浏览器桥调用失败"
+
+
 def _api_call(base, path, token, uid, body=None):
+    if bridge_enabled():
+        return _bridge_call(path, body)
     url = base + path
     data = json.dumps(body).encode("utf-8") if body is not None else b"{}"
     req = urllib.request.Request(url, data=data, method="POST")
@@ -301,6 +459,28 @@ def api_daily_checkin(token, uid):
     if err:
         return None, err
     return data.get("data") or {}, None
+
+
+def api_account_info():
+    """取当前账号的昵称与角色。返回 (dict, err)。
+
+    桥模式：`GET /console/account` → `{uid, nickname, uin, type, isAdmin, ...}`
+    （`type` 如 `personal`，官网前端把它渲染成「个人版」）。
+    直连模式：退化为登录态文件里的 `account` 段。
+    """
+    if bridge_enabled():
+        res = get_bridge().call(ACCOUNT_PATH, method="GET")
+        if res["ok"]:
+            return ((res["data"] or {}).get("data") or {}), None
+        if res["kind"] == "session_expired":
+            SESSION_STATE.update(expired=True, at=time.time(),
+                                 reason=res.get("error") or "")
+            return None, "浏览器会话已过期"
+        return None, res.get("error") or "取账号信息失败"
+    login = load_login()
+    if not login:
+        return None, "未登录"
+    return (login[2] or {}), None
 
 
 def _norm_range(start, end):
@@ -805,6 +985,14 @@ def compute_today_used_l5(rows, today=None):
 RECONCILE_TOLERANCE = 0.05   # 偏差阈值 5%（按周/月聚合比对，单日噪声大）
 RECONCILE_WARMUP_DAYS = 14   # 上线前两周只记录不告警
 
+# 「预计可用天数」的观测窗口与最低日均：
+#   窗口 30 天 —— 7 天太短，会被「最近一周恰好没怎么用」这类异常期完全主导。
+#     实测 2026-09-26：近 7 天日均 0.59 →「9473 天」；近 30 天日均 77.74 →「72 天」✓
+#   下限 1.0 —— 即便在 30 天窗口下，均值若仍低于此值说明样本过稀、除出来的天数会荒谬，
+#     此时不估算（页面显示 —），副标题如实给出「有消耗的天数」说明原因。
+DAILY_AVG_WINDOW_DAYS = 30
+DAYS_LEFT_MIN_AVG = 1.0
+
 
 def reconcile(l5_rows, usage_hist, snapshots=None, tolerance=RECONCILE_TOLERANCE,
               income_events=None, l2_start=None):
@@ -1156,6 +1344,73 @@ def accumulate_checkin(checkin_dates):
     history["dates"] = sorted(dates)
     _save_json(CHECKIN_HISTORY_FILE, history)
     return history["dates"]
+
+
+# 历史出现过的「签到达成奖励额」（每日一份）。当前档位由接口 daily_credit 提供；
+# 历史档位在此登记，避免「活动调整奖励额后按新档位回溯」时漏掉旧记录。
+# 实测：2026-05-20 ~ 06-30 为 150/日，其余时期 100/日 —— 两档日期互不重叠，互为补集。
+CHECKIN_CREDIT_ALIASES = (150.0,)
+
+
+def derive_checkin_dates(raw_accounts, daily_credit):
+    """从资源包记录**反推签到日期**。
+
+    依据：签到奖励在服务端以「散包到账」形式出现（`PackageName` 为运营裂变包、
+    每日一份、size 等于当日奖励额）—— 与 `build_ledger()` 识别签到奖励包的判据一致。
+    `CycleStartTime` 即到账当天，取日期部分即为签到日。
+
+    为什么需要它：签到状态接口的 `checkin_dates` **只含当前活动周期**，本地累积又从
+    「第一次调用」才开始。两者都拿不到更早的历史 —— 而包记录是**服务端权威且跨设备**的，
+    能恢复到「签到奖励包还在」的整个时期（实测可回溯到 2026-04-03）。
+
+    参数 raw_accounts：L6 的原始 Accounts[]（传入时请**同时包含 valid 与 expired**，历史最全）。
+    返回升序日期列表（YYYY-MM-DD）。
+    """
+    try:
+        base = float(daily_credit or 0)
+    except (TypeError, ValueError):
+        base = 0.0
+    wanted = {base} | set(CHECKIN_CREDIT_ALIASES)
+    wanted.discard(0.0)
+    if not wanted:
+        return []
+    out = set()
+    for a in raw_accounts or []:
+        size = _num(a.get("CapacitySizePrecise") or a.get("CapacitySize"))
+        if not any(abs(size - w) < 1e-6 for w in wanted):
+            continue
+        d = (a.get("CycleStartTime") or "")[:10]
+        if len(d) == 10 and d[4] == "-" and d[7] == "-":
+            out.add(d)
+    return sorted(out)
+
+
+def compute_real_streak(dates, today=None):
+    """**真实连续签到天数**（可跨活动周期）——基于本地长期累积的签到日期自算。
+
+    为什么不能直接用接口的 `streak_days`：它统计的是**当前活动周期内**的签到天数
+    （实测 `checkin_dates` 的起点与 `start_time` 完全重合，长度也等于 `streak_days`），
+    活动周期一换就归零重算 —— 不等于用户实际连续签了多少天。
+    本地 `checkin_history.json` 会持续累积（每次取签到状态都把当期日期并入），
+    因此可以跨周期回溯。
+
+    规则：从今天往前逐日回溯；若今天还没签，则从昨天起算（连续尚未中断）。
+    返回 0 表示昨天与今天都没签（连续已断）。
+
+    ⚠️ 局限：完全依赖本地累积 —— 换机/重装后存档为空会从 0 起算，属**低估**而非高估。
+    当回溯恰好停在存档最早一天时，返回值应理解为「至少这么多天」。
+    """
+    if not dates:
+        return 0
+    have = set(dates)
+    cur = datetime.strptime(today, "%Y-%m-%d") if today else datetime.now()
+    if cur.strftime("%Y-%m-%d") not in have:
+        cur = cur - timedelta(days=1)
+    n = 0
+    while cur.strftime("%Y-%m-%d") in have:
+        n += 1
+        cur = cur - timedelta(days=1)
+    return n
 
 
 def accumulate_income(packages):
@@ -1641,6 +1896,7 @@ _PANEL_KEYS = {
         "summary", "waste", "waste_authoritative",
         "total_remain", "avail_count", "total_used", "today_used",
         "today_used_l5", "today_used_l2", "usage_source", "days_left", "daily_avg",
+        "active_days_30d", "daily_avg_window",
         "checkin", "usage_daily", "income_daily", "ledger", "usage_sessions",
         "expiry_list", "capacity_note", "sources_health",
     ),
@@ -1699,6 +1955,13 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     降为「最慢的一路」（实测 ≈0.8s）；纯装配 CPU 仅 0.03s，不是瓶颈。
     hub/fresh 供常驻服务复用缓存与做面板级局部刷新。
     """
+    # 昵称 / 角色：桥模式下凭据不在本机，调用方传来的 account 是占位值 ——
+    # 从站点接口 /console/account 取真实信息（失败不连累整页，退回占位）。
+    if bridge_enabled() and (not account or account.get("nickname") in (None, "", "浏览器会话")):
+        info, _aerr = api_account_info()
+        if info:
+            account = dict(info)
+
     src = fetch_sources(token, uid, sync_days, hub=hub, fresh=fresh)
 
     accounts, res_err = src.get("resource") or (None, "资源接口未返回")
@@ -1841,10 +2104,19 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     heatmap = uhourly
 
     # ---- 自积累账本（签到合并 + 包到账对比 ResourceId）----
-    checkin_dates_raw = st.get("checkin_dates", [])
-    accumulated_checkin = accumulate_checkin(checkin_dates_raw)
-    income_events = accumulate_income(packages)
+    # 签到日期三源合并（由近及远）：① 接口当期 checkin_dates ② 本地累积存档
+    # ③ 从资源包反推 —— ③ 是关键：接口只给当期，本地累积从首次调用才开始，
+    #    只有服务端的包记录能跨设备回溯更早的历史（实测可到 2026-04-03）。
     daily_credit_val = st.get("daily_credit", 0) or 0
+    checkin_dates_raw = st.get("checkin_dates", [])
+    pkg_checkin = derive_checkin_dates(
+        (l6_lists.get("valid") or []) + (l6_lists.get("expired") or []), daily_credit_val)
+    accumulated_checkin = accumulate_checkin(
+        list(checkin_dates_raw) + list(pkg_checkin))
+    # 真实连续签到天数（跨活动周期）：接口的 streak_days 只算当期、换周期即归零重算，
+    # 故用合并后的签到日期自算，供「今日签到」卡展示。
+    real_streak = compute_real_streak(accumulated_checkin, today_str)
+    income_events = accumulate_income(packages)
     ledger = build_ledger({d["date"]: d["credit"] for d in udaily}, packages, accumulated_checkin, daily_credit_val)
     # 收入日数据（签到 + 包到账，按天），供收入日历热力图使用
     income_daily = [{"date": r["date"], "income": r["income"]} for r in ledger]
@@ -1859,15 +2131,19 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     health = sources_health(l5_meta, l6_meta, rec, l2_points,
                             checkin_status_ok(st.get("checkin_dates"), today_str))
 
-    # ---- 预测：近 7 天日均消耗 + 预计可用天数 ----
+    # ---- 预测：近 N 天日均消耗 + 预计可用天数 ----
     # 用统一的 udaily（L5 优先、L2 兜底）而非本地库：L5 覆盖 30+ 天且免疫
     # 「包到账被误算成消耗」的伪增量（见 compute_usage_daily 的已知缺陷说明）。
     # 同时剔除今日（未完天）以免日均被低估。
     hist_days = [d["credit"] for d in udaily if d["date"] < today_str]
-    recent7 = hist_days[-7:]
-    daily_avg = round(sum(recent7) / len(recent7), 4) if recent7 else 0.0
+    recent = hist_days[-DAILY_AVG_WINDOW_DAYS:]
+    daily_avg = round(sum(recent) / len(recent), 4) if recent else 0.0
+    active_days = sum(1 for c in recent if c > 0)   # 有消耗的天数（解释日均为何偏低）
     total_remain_val = round(sum(g["remain_sum"] for g in groups), 4)
-    days_left = round(total_remain_val / daily_avg, 1) if daily_avg > 0 else None
+    # 日均过低时**不予估算**：见 DAYS_LEFT_MIN_AVG 的说明。页面此时显示 —
+    # 并在副标题如实给出「仅 N 天有消耗」，让用户明白是样本稀而非数据缺失。
+    days_left = (round(total_remain_val / daily_avg, 1)
+                 if daily_avg >= DAYS_LEFT_MIN_AVG else None)
 
     # ---- 建议（规则引擎）----
     advice = []
@@ -1875,7 +2151,8 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         advice.append("你有 %d 个批次将在 %d 天内到期（合计 %.2f 积分），建议优先消耗"
                       % (waste["at_risk_count"], waste["soon_days"], waste["at_risk"]))
     if days_left is not None:
-        advice.append("按近 7 天日均消耗 %.2f 积分，剩余积分约可用 %.1f 天" % (daily_avg, days_left))
+        advice.append("按近 %d 天日均消耗 %.2f 积分，剩余积分约可用 %.1f 天"
+                      % (DAILY_AVG_WINDOW_DAYS, daily_avg, days_left))
     advice.append("坚持每日签到（每日 +%s 积分），每月约可补 %d 积分"
                   % (daily_credit_val, int(float(daily_credit_val) * 30)))
     if waste["wasted"] > 0:
@@ -1884,14 +2161,14 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     # ---- 使用摘要（一段综合文字）----
     summary_parts = []
     if daily_avg > 0:
-        summary_parts.append("近 7 天日均消耗 %.1f 积分" % daily_avg)
+        summary_parts.append("近 %d 天日均消耗 %.1f 积分" % (DAILY_AVG_WINDOW_DAYS, daily_avg))
     if days_left is not None:
         summary_parts.append("按当前节奏，剩余积分约可用 %.1f 天" % days_left)
     if waste["at_risk_count"] > 0:
         summary_parts.append("%d 个批次 %d 天内到期（%.2f 积分）"
                              % (waste["at_risk_count"], waste["soon_days"], waste["at_risk"]))
     summary_parts.append("连续签到 %d 天，每日 +%s 积分"
-                         % (st.get("streak_days", 0), daily_credit_val))
+                         % (real_streak, daily_credit_val))
     summary = "，".join(summary_parts) + "。"
 
     # 今日已使用：直接沿用上面「L5 优先、L2 兜底」的结果（与 usage_source 标注一致）。
@@ -1928,6 +2205,8 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         "usage_heatmap": heatmap,
         "usage_hourly": uhourly,
         "daily_avg": daily_avg,
+        "active_days_30d": active_days,
+        "daily_avg_window": DAILY_AVG_WINDOW_DAYS,
         "days_left": days_left,
         "ledger": ledger,
         "advice": advice,
@@ -1939,7 +2218,11 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         "waste_authoritative": waste_auth,
         "checkin": {
             "today_checked_in": bool(st.get("today_checked_in")),
+            # streak_days：**活动周期内**的签到天数（接口口径，周期切换即归零重算）
             "streak_days": st.get("streak_days", 0),
+            # real_streak_days：**真实连续**签到天数（跨周期，由本地累积自算）
+            "real_streak_days": real_streak,
+            "local_history_days": len(accumulated_checkin),
             "daily_credit": st.get("daily_credit", 0),
             "activity_name": st.get("activity_name", ""),
             "theme_name": st.get("theme_name", ""),
