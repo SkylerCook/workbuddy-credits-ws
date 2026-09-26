@@ -46,10 +46,13 @@ LAUNCH_ARGS = [
     "--window-size=1024,768",
 ]
 
-# 登录模式启动参数：窗口回到屏幕内、正常大小，方便用户操作
+# 登录模式启动参数：窗口回到屏幕内、正常大小，方便用户操作。
+# ⚠️ 必须显式给 --window-position：持久化 profile 会「记住」静默窗口的屏幕外坐标
+# （-32000,-32000），若这里不写坐标，Chrome 恢复 profile 位置 → 登录窗仍弹在屏幕外。
 LAUNCH_ARGS_VISIBLE = [
     "--no-first-run",
     "--no-default-browser-check",
+    "--window-position=80,80",
     "--window-size=1100,820",
 ]
 
@@ -101,9 +104,56 @@ CALL_TIMEOUT = 90        # 单次接口调用的容忍时间
 
 
 def default_profile_dir():
-    """浏览器 profile 的默认位置（与其他用户数据同处，避免被临时目录清理误伤）。"""
+    """浏览器 profile 的基础位置（与其他用户数据同处，避免被临时目录清理误伤）。"""
     return os.path.join(os.path.expanduser("~"), ".workbuddy",
                         "workbuddy-credits-data", "browser_profile")
+
+
+# Chrome 与 Edge 对**同一个 user-data-dir** 的 cookie 加密互不兼容（各自持有/轮换
+# os_crypt 密钥，跨应用解密失败）—— 混用同一目录会让会话「凭空消失」：
+# 实测 2026-09-26，早上在 Chrome 窗口登录，下午桥切到 Edge（v1.7.4 Edge 优先）
+# 接管同一 profile 后会话即失效。故 **profile 按浏览器分目录**，各存各的 cookie；
+# 切换浏览器后首次需重新登录一次（新目录无 cookie），稳定后互不影响。
+# chrome 沿用无后缀的基础目录（兼容历史 Chrome 用户的已有 profile）。
+CHANNEL_PROFILE_SUFFIX = {"msedge": "-msedge", "chrome": ""}
+
+
+def profile_dir_for(channel, base=None):
+    """某浏览器专用 profile 目录。"""
+    suffix = CHANNEL_PROFILE_SUFFIX.get(channel, "-" + channel)
+    return (base or default_profile_dir()) + suffix
+
+
+def _data_dir():
+    return os.path.dirname(default_profile_dir())
+
+
+LAST_CHANNEL_FILE = os.path.join(_data_dir(), "browser_channel.txt")
+
+
+def read_last_channel():
+    """上次**登录成功**所用浏览器的 channel（保证 cookie 连续性；读到即最优先）。"""
+    try:
+        with open(LAST_CHANNEL_FILE, "r", encoding="utf-8") as f:
+            v = f.read().strip()
+        return v if v in CHANNEL_PROFILE_SUFFIX else ""
+    except Exception:
+        return ""
+
+
+def write_last_channel(channel):
+    try:
+        os.makedirs(os.path.dirname(LAST_CHANNEL_FILE), exist_ok=True)
+        with open(LAST_CHANNEL_FILE, "w", encoding="utf-8") as f:
+            f.write(channel)
+    except Exception:
+        pass
+
+
+def channel_candidates():
+    """launch 的候选顺序：上次登录成功的浏览器最优先（cookie 连续），其余按默认序。"""
+    last = read_last_channel()
+    return ([last] if last else []) + [c for c in BROWSER_CHANNELS if c != last]
 
 
 class BrowserBridge:
@@ -114,9 +164,13 @@ class BrowserBridge:
     """
 
     def __init__(self, profile_dir=None, base_url=DEFAULT_BASE, logger=None):
+        # profile_dir：显式传入则所有浏览器共用（自定义场景，原行为）；
+        # 默认按浏览器分目录（见 profile_dir_for —— Chrome/Edge cookie 加密互不兼容）。
         self.profile_dir = profile_dir or default_profile_dir()
+        self._custom_profile = profile_dir is not None
         self.base_url = (base_url or DEFAULT_BASE).rstrip("/")
         self.log = logger or (lambda msg: None)
+        self._channel = ""          # 本次 launch 实际使用的浏览器 channel
 
         self._q = queue.Queue()
         self._thread = None
@@ -213,10 +267,14 @@ class BrowserBridge:
 
     def status(self):
         """给 UI 用的轻量状态。"""
+        actual = self.profile_dir
+        if self._channel and not self._custom_profile:
+            actual = profile_dir_for(self._channel)   # launch 实际使用的 profile
         return {
             "running": bool(self._thread and self._thread.is_alive()),
             "login_mode": self._login_mode,
-            "profile_dir": self.profile_dir,
+            "channel": self._channel,
+            "profile_dir": actual,
             "base_url": self.base_url,
         }
 
@@ -284,23 +342,30 @@ class BrowserBridge:
     def _launch(self, p, visible):
         """启动持久化上下文并停在落地页。返回 (ctx, page)。
 
-        优先用 Edge（Windows 自带），机器没装 Edge 时自动回退 Chrome —— channel 别名
-        不存在会在 launch 阶段抛异常（此时尚未创建进程 / 锁定 profile），换候选是安全的。
+        候选顺序：**上次登录成功的浏览器最优先**（其 profile 才有有效 cookie），
+        其余按默认序（Edge 优先、Chrome 回退）。每个 channel 用**自己的 profile**
+        （Chrome/Edge 的 cookie 加密互不兼容，绝不能共用目录）。
+        channel 别名不存在会在 launch 阶段抛异常（此时尚未创建进程 / 锁定
+        profile），换下一个候选是安全的。
         """
         args = LAUNCH_ARGS_VISIBLE if visible else LAUNCH_ARGS
         last_err = None
-        for ch in BROWSER_CHANNELS:
+        ctx = None
+        for ch in channel_candidates():
             try:
                 ctx = p.chromium.launch_persistent_context(
-                    self.profile_dir, headless=False, channel=ch, args=args)
+                    self.profile_dir if self._custom_profile else profile_dir_for(ch),
+                    headless=False, channel=ch, args=args)
+                self._channel = ch
                 break
             except Exception as e:
                 last_err = e
                 continue
-        else:
+        if ctx is None:
             raise RuntimeError(
-                "未找到可用的浏览器（已尝试 Edge / Chrome）：%s。"
-                "请安装 Microsoft Edge 或 Google Chrome。" % (last_err or "未知错误"))
+                "未找到可用的浏览器（已尝试 %s）：%s。"
+                "请安装 Microsoft Edge 或 Google Chrome。"
+                % (" / ".join(channel_candidates()), last_err or "未知错误"))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(self.base_url + LANDING_PATH,
@@ -424,9 +489,15 @@ class BrowserBridge:
         return out
 
     def _relogin_flow(self, p, payload):
-        """用可见窗口请用户登录，轮询会话探针直到可用或超时。返回 (ok, msg)。"""
+        """用可见窗口请用户登录，轮询 session cookie 直到有效或超时。返回 (ok, msg)。
+
+        判定登录成功**不看「页面发探针请求」** —— 登录后页面可能跳转/导航，
+        `page.evaluate` 会反复失败导致误判超时（实测「登录成功但工作台没自动刷新」）。
+        改为直接读 session cookie 的到期时间：登录成功后服务端 Set-Cookie 会把它更新为
+        「未来 7 天」，与页面状态无关、更可靠。
+        """
         wait_seconds = int(payload.get("wait_seconds", 300))
-        poll = float(payload.get("poll", 3))
+        poll = float(payload.get("poll", 2))
         self._login_mode = True
         ctxv = None
         try:
@@ -434,9 +505,10 @@ class BrowserBridge:
             deadline = time.time() + wait_seconds
             while time.time() < deadline:
                 try:
-                    r = pv.evaluate(JS_CALL, [SESSION_PROBE, {}])
-                    j = r.get("json")
-                    if r.get("status") == 200 and isinstance(j, dict) and j.get("code") == 0:
+                    info = self._collect_session(ctxv)
+                    if info.get("expires_at") and not info.get("expired"):
+                        # 记住登录用的浏览器：下次 launch 最优先用它，保证 cookie 连续
+                        write_last_channel(self._channel)
                         return True, "登录成功"
                 except Exception:
                     pass

@@ -62,12 +62,30 @@ cookie 由浏览器自动携带。**本技能不接触、不解析、不落盘�
    "无头"用 `--window-position=-32000,-32000`
 2. **Playwright sync API 有线程亲和性** → 桥跑在专用线程里，其他线程经队列提交（actor 模式）
 3. **网关层 HTML 401 = 会话过期**（openresty 返回），≠ 业务错误（业务错误是 JSON `code:xxxx`）
+4. **持久化 profile 会「记住」窗口坐标**（v1.7.6 踩坑）：静默窗口用 `--window-position=-32000,-32000`
+   移出屏幕，坐标会在 `ctx.close()` 时写进 profile；登录/可见窗口若**不给** `--window-position`
+   就会恢复这个屏幕外坐标 → 登录弹窗「消失」在屏幕外。故 `LAUNCH_ARGS_VISIBLE` 必须显式
+   `--window-position=80,80`（命令行参数优先级高于 profile 记住的位置，实测生效）。
 
 **浏览器来源**：用 `channel` 别名驱动**系统浏览器**（不是 Playwright 自带内核，故**无需**
-`playwright install` 下载内核）。候选顺序 `["msedge", "chrome"]`（2026-09-26 起）：
-**优先 Edge**（Windows 默认自带、零安装），机器没装 Edge 时**自动回退 Chrome**。
+`playwright install` 下载内核）。候选顺序：**上次登录成功的浏览器最优先**（记在数据目录
+`browser_channel.txt`，relogin 成功时写入 —— 它的 profile 才有有效 cookie），
+其次 Edge（Windows 默认自带）、Chrome 回退。
 channel 别名不存在时在 launch 阶段即抛异常（此时尚未创建进程 / 锁 profile），换下一个候选是安全的。
 Firefox 不兼容 —— Playwright 的 Firefox 是自带 Gecko 内核，且本桥的会话机制只针对 Chromium 系实测。
+
+**登录完成判定用 cookie、不用页面探针**（v1.7.6）：`_relogin_flow` 原靠 `page.evaluate`
+发 `get-user-resource-summary` 探针轮询 `code==0`，登录后页面跳转/导航会让 `evaluate`
+反复失败 → 误判超时 → 前端不刷新（实测「登录成功但没自动刷新」）。改为读
+`ctx.cookies()` 的 session cookie 到期时间（登录后 Set-Cookie 更新为未来 7 天），
+与页面状态无关、可靠。
+
+**⚠️ 禁止 Chrome/Edge 共用同一个 profile 目录（v1.7.6 踩坑，实测）**：两者对同一
+user-data-dir 的 cookie 加密互不兼容（各自持有/轮换 `os_crypt` 密钥，跨应用解密失败）——
+实测早上 Chrome 登录、下午桥切 Edge 接管同一 profile 后会话即「凭空失效」
+（与"混用 headful/headless 会话消失"同类）。故 `profile_dir_for(channel)` 按浏览器
+分目录：`browser_profile`（chrome 沿用）/ `browser_profile-msedge`；切换浏览器后
+首次需重新登录一次。
 
 ## 三、性能设计（v1.6.0）
 
