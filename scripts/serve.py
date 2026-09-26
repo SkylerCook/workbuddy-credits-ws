@@ -10,7 +10,7 @@ serve.py —— 积分工作台本地服务：提供可刷新的工作台。
 接口：
   GET /                     工作台页面
   GET /api/version          版本号（瞬时，不打上游）
-  GET /api/update           是否有新版本（**只读缓存**；联网在后台线程，缓存 12h）
+  GET /api/update           是否有新版本（**只读缓存**；联网在后台线程，缓存 1h）
   GET /api/overview         概览：KPI / 图表 / 账本 / 会话 / 批次 / 签到
   GET /api/requests         消耗明细：请求级大表 + 构成 + 对账
   GET /api/lifecycle        包生命周期：有效期内 / 已过期 + 权威浪费
@@ -35,6 +35,7 @@ serve.py —— 积分工作台本地服务：提供可刷新的工作台。
 import atexit
 import json
 import os
+import subprocess
 import sys
 import time
 import threading
@@ -290,9 +291,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # 瞬时返回，不打上游：页头版本号要立刻可见
             self._send_json({"version": wc.VERSION, "ok": True})
         elif path == "/api/update":
-            # 是否有新版本：**只读缓存**（联网在后台线程做，结果缓存 12h）。
+            # 是否有新版本：**只读缓存**（联网在后台线程做，结果缓存 1h）。
             # 本接口永不阻塞、不修改任何本地文件 —— 升级由用户显式跑 update.py。
             self._send_json(wc.update_status())
+        elif path == "/api/update-run":
+            # 「立即升级」：用户在提示条上点按钮 = **用户显式触发**升级（与"用户自己跑
+            # update.py"等价，不违反「改本地文件必须用户触发」的约束）。
+            # 实现上以子进程跑 update.py（同解释器；它自带 sha256 校验 + 覆盖文件 +
+            # 经 launcher 重启本服务），所以这里只负责"点火"：响应先返回，
+            # 升级进度由前端轮询 /api/version 观察（服务被重启时连接拒绝属正常过程）。
+            upd_py = os.path.join(HERE, "update.py")
+            if not os.path.exists(upd_py):
+                self._send_json({"ok": False, "error": "找不到 update.py"}, 500)
+            else:
+                if sys.platform == "win32":
+                    flags = (subprocess.DETACHED_PROCESS
+                             | subprocess.CREATE_NEW_PROCESS_GROUP
+                             | subprocess.CREATE_NO_WINDOW)
+                    kw = {"creationflags": flags, "close_fds": True}
+                else:
+                    kw = {"start_new_session": True, "close_fds": True}
+                subprocess.Popen([sys.executable, upd_py], cwd=HERE, **kw)
+                self._send_json({"ok": True,
+                                 "message": "升级已开始：服务将自动重启，页面随后自动刷新"})
         elif path in ("/api/overview", "/api/requests", "/api/lifecycle"):
             panel = path.rsplit("/", 1)[-1]
             self._send_json(build_panel_json(panel, fresh=self._fresh_flag(qs)))

@@ -2330,7 +2330,10 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
 # 这里的职责仅是「让用户知道有新版本」，所以它永远不改任何本地文件。
 UPDATE_REPO = "https://github.com/SkylerCook/workbuddy-credits-ws"   # 与 update.py 的 DEFAULT_REPO 一致
 UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "update_check.json")
-UPDATE_CHECK_TTL = 12 * 3600      # 检查成功：12 小时内不重复联网
+UPDATE_CHECK_TTL = 1 * 3600       # 检查成功：1 小时内不重复联网
+# 为什么从 12h 缩到 1h（2026-09-26）：12h 窗口意味着「新版本发布后，用户最多 12 小时
+# 看不到提示」——发布前刚检查过一次（结论 same）就会被缓存住。GitHub 匿名限流 60 次/时，
+# TTL=1h 每小时最多联网 1 次，远在预算内；发现延迟从 12h 降到 1h。
 UPDATE_CHECK_FAIL_TTL = 1800      # 检查失败：30 分钟内不重试（避免每次开页面都卡网）
 
 _update_lock = threading.Lock()

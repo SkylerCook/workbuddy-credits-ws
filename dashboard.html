@@ -896,9 +896,56 @@
       '<span class="nt-ico">↑</span>' +
       '<span class="nt-txt">有新版本 <b>v' + d.remote + '</b> 可用（当前 v' + d.local + '）' +
         (d.published ? ' · 发布于 ' + d.published : '') +
-        '。升级：对 Agent 说「<b>更新积分 skill</b>」（或运行 <code>python update.py</code>）。</span>' +
+        '。也可对 Agent 说「<b>更新积分 skill</b>」。</span>' +
+      '<button class="nt-btn" id="upd-run">立即升级</button>' +
       '<button class="nt-btn" id="upd-dismiss">知道了</button>';
     el.style.display = 'flex';
+
+    const txt = el.querySelector('.nt-txt');
+    const runBtn = el.querySelector('#upd-run');
+    if (runBtn) {
+      runBtn.addEventListener('click', function () {
+        if (!confirm('升级到 v' + d.remote + '？\n\n升级包经 sha256 校验后覆盖安装，'
+          + '服务会自动重启（约 10~30 秒），完成后页面自动刷新。')) return;
+        runBtn.disabled = true;
+        runBtn.textContent = '升级中…';
+        if (txt) txt.innerHTML = '正在升级到 <b>v' + d.remote + '</b>…'
+          + '（下载 → 校验 → 覆盖 → 自动重启，请勿关闭页面）';
+        fetch('/api/update-run', { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .catch(function () { return { ok: false, error: '无法连接本地服务' }; })
+          .then(function (res) {
+            if (!res || !res.ok) {
+              runBtn.disabled = false;
+              runBtn.textContent = '立即升级';
+              if (txt) txt.innerHTML = '升级启动失败：' + ((res && res.error) || '未知原因')
+                + '。可手动运行 <code>python update.py</code>';
+              return;
+            }
+            // 轮询版本：update.py 会结束并重启本服务 —— 中途连接拒绝属正常过程
+            const before = d.local;
+            const t0 = Date.now();
+            (function poll() {
+              if (Date.now() - t0 > 180000) {
+                if (txt) txt.innerHTML = '升级耗时较长，请稍后手动刷新页面确认版本。';
+                return;
+              }
+              fetch('/api/version', { cache: 'no-store' })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (v) {
+                  if (v && v.version && v.version !== before) {
+                    if (txt) txt.innerHTML = '升级完成（v' + v.version + '），正在刷新页面…';
+                    setTimeout(function () { location.reload(); }, 1200);
+                    return;
+                  }
+                  setTimeout(poll, 2000);
+                })
+                .catch(function () { setTimeout(poll, 2000); });
+            })();
+          });
+      });
+    }
+
     const btn = el.querySelector('#upd-dismiss');
     if (btn) {
       btn.addEventListener('click', function () {
