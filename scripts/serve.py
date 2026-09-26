@@ -143,6 +143,46 @@ class SourceHub:
 
 HUB = SourceHub()
 
+# 页面存活心跳：工作台页面定时发 /api/heartbeat 刷新此值；关闭全部页面后触发退出。
+_last_heartbeat = time.time()
+_pending_close = 0.0        # 收到页面告别（pagehide）的时间戳；0 = 无待关闭
+IDLE_TIMEOUT = 300          # 心跳兜底超时（容忍浏览器后台标签页节流与短期冻结，不误杀）
+BYE_CONFIRM_SECONDS = 75    # 页面告别后的确认期：期间仍有其它标签页心跳则取消关闭
+
+
+def _shutdown(reason):
+    """关掉浏览器桥并结束本进程（os._exit 不走 atexit，桥须显式关）。"""
+    print(reason)
+    try:
+        wc.bridge_close()
+    except Exception:
+        pass
+    os._exit(0)
+
+
+def _idle_watchdog():
+    """看门狗：页面关闭后自动退出后台（服务 + 浏览器桥一并清理）。
+
+    两路触发：
+    1. **告别路**：页面关闭时 `pagehide` 发 `/api/bye`，进入确认期；若确认期内
+       无其它标签页心跳，则判定「最后一个标签页已关」→ 退出（快，约 75 秒）。
+    2. **心跳兜底路**：页面既没告别、心跳也停满 IDLE_TIMEOUT（如浏览器把标签页
+       **冻结**了，JS 停、但 pagehide 不触发）→ 退出（慢，兜底冻结场景）。
+    标签页仅切到后台（未冻结）时定时器仍被浏览器以 ~1 次/分钟节流发出，不会误杀。
+    """
+    global _pending_close
+    while True:
+        time.sleep(15)
+        now = time.time()
+        if _pending_close:
+            if now - _pending_close > BYE_CONFIRM_SECONDS:
+                if _last_heartbeat >= _pending_close:
+                    _pending_close = 0.0   # 确认期内有其它标签页心跳 → 取消
+                else:
+                    _shutdown("工作台已关闭，自动退出后台…")
+        elif now - _last_heartbeat > IDLE_TIMEOUT:
+            _shutdown("工作台页面长时间无心跳，自动退出后台…")
+
 
 def _auth_status(auth_path):
     """读取登录态剩余有效期，供页面提示。只返回到期时间与剩余天数，不暴露 token 明文。
@@ -290,6 +330,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/version":
             # 瞬时返回，不打上游：页头版本号要立刻可见
             self._send_json({"version": wc.VERSION, "ok": True})
+        elif path == "/api/heartbeat":
+            # 页面存活心跳：工作台页面定时发；一旦页面全部关闭、超时未收到，
+            # 看门狗会自动退出后台（服务 + 浏览器桥一并清理）。
+            global _last_heartbeat
+            _last_heartbeat = time.time()
+            self._send_json({"ok": True})
+        elif path == "/api/bye":
+            # 页面关闭告别：pagehide 时发送。进入「待关闭」确认期，若确认期内
+            # 无其它标签页心跳则退出（精确区分「关闭」与「切后台/冻结」）。
+            global _pending_close
+            _pending_close = time.time()
+            self._send_json({"ok": True})
         elif path == "/api/update":
             # 是否有新版本：**只读缓存**（联网在后台线程做，结果缓存 1h）。
             # 本接口永不阻塞、不修改任何本地文件 —— 升级由用户显式跑 update.py。
@@ -343,6 +395,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if ok:
                     HUB.invalidate()
                 self._send_json({"ok": ok, "message": msg}, 200 if ok else 400)
+            elif key == "browser_channel":
+                ok, msg = wc.set_browser_channel((qs.get("value") or [""])[0])
+                self._send_json({"ok": ok, "message": msg}, 200 if ok else 400)
             else:
                 self._send_json({"ok": False, "error": "未知配置项: %s" % key}, 400)
         elif path == "/api/relogin":
@@ -368,6 +423,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._send(f.read(), _mime_for(name))
             else:
                 self._send(b"not found", "text/plain", 404)
+        else:
+            self._send(b"not found", "text/plain", 404)
+
+    def do_POST(self):
+        # sendBeacon（pagehide 告别）强制发 POST；其余接口都是 GET + query。
+        # 这里只接「页面告别」这一路 POST。
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path == "/api/bye":
+            global _pending_close
+            _pending_close = time.time()
+            self._send_json({"ok": True})
         else:
             self._send(b"not found", "text/plain", 404)
 
@@ -407,6 +474,8 @@ def main():
             if wc.bridge_enabled() else "直连 API"))
         # 预热：后台拉起浏览器 + 预取四源，免得首屏干等 3~5s 冷启动
         threading.Thread(target=_warmup, name="wb-warmup", daemon=True).start()
+        # 看门狗：页面全部关闭后自动退出后台（服务 + 浏览器桥）
+        threading.Thread(target=_idle_watchdog, name="wb-idle", daemon=True).start()
         # 顺带预热一次版本检查：它也是后台线程，等用户打开页面时缓存通常已就绪
         try:
             wc.update_status(trigger=True)

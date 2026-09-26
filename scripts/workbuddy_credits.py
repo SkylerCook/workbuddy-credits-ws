@@ -1126,6 +1126,35 @@ def set_avg_window(days):
         return False, "保存失败: %s" % e
 
 
+# 取数浏览器偏好：auto（自动）/ chrome / msedge。存 config.json 的 browser_channel。
+BROWSER_CHANNEL_CHOICES = ("auto", "chrome", "msedge")
+
+
+def get_browser_channel():
+    """用户手动指定的取数浏览器。auto = 自动（Edge 优先、Chrome 回退 + 记住上次登录）。"""
+    v = _read_config().get("browser_channel", "auto")
+    return v if v in BROWSER_CHANNEL_CHOICES else "auto"
+
+
+def set_browser_channel(channel):
+    """写取数浏览器偏好。返回 (ok, message)。"""
+    v = (channel or "auto").strip().lower()
+    if v not in BROWSER_CHANNEL_CHOICES:
+        return False, "浏览器取值须为 auto / chrome / msedge"
+    cfg = _read_config()
+    cfg["browser_channel"] = v
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CONFIG_FILE)
+        label = {"auto": "自动", "chrome": "Google Chrome", "msedge": "Microsoft Edge"}.get(v, v)
+        return True, "已保存（取数浏览器：%s）" % label
+    except Exception as e:
+        return False, "保存失败: %s" % e
+
+
 def reconcile(l5_rows, usage_hist, snapshots=None, tolerance=RECONCILE_TOLERANCE,
               income_events=None, l2_start=None):
     """双通路对账：L5 请求级消耗 vs L2 逐包余量差分。
@@ -2026,6 +2055,7 @@ _PANEL_KEYS = {
     "overview": (
         "version", "generated_at", "nickname", "account_type", "auth_status",
         "plan_tier",       # 套餐档位（Free/Pro/Plus/Max），从订阅型包 PackageName 映射
+        "browser_channel", # 取数浏览器偏好（auto/chrome/msedge）
         "summary", "waste", "waste_authoritative",
         "total_remain", "avail_count", "total_used", "today_used",
         "today_used_l5", "today_used_l2", "usage_source", "days_left", "daily_avg",
@@ -2333,6 +2363,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         "nickname": account.get("nickname", "-"),
         "account_type": account.get("type", ""),
         "plan_tier": plan_tier_val,         # 套餐档位（Free/Pro/Plus/Max），识别不出为空
+        "browser_channel": get_browser_channel(),   # 取数浏览器偏好（auto/chrome/msedge）
         "groups": [
             {"label": g["label"], "avail_count": g["avail_count"],
              "remain_sum": g["remain_sum"], "total_count": g["total_count"]}
@@ -2473,6 +2504,28 @@ def _update_cache_stale(st):
     return (time.time() - ts) > ttl
 
 
+def _rebase_update_cache(st):
+    """用**当前进程版本**重新校准缓存的 local/state。
+
+    升级后服务会重启：进程 VERSION 已是新版本，但 `update_check.json` 里的 local
+    还是旧进程写的旧值、state 停在 'newer' —— 直接返回会让前端在「已升级」后仍
+    显示「有新版本」。故每次读缓存后用 VERSION 重算 state（本地比较，不联网）。
+    """
+    if not st or st.get("state") == "error":
+        return st
+    remote = st.get("remote") or ""
+    if remote:
+        try:
+            import update as upd
+            state = upd.cmp_version(VERSION, remote)
+        except Exception:
+            return st
+        st = dict(st)
+        st["local"] = VERSION
+        st["state"] = state if state in ("newer", "same", "older") else "unknown"
+    return st
+
+
 def update_status(trigger=True):
     """版本状态。**立即返回**（可能来自缓存）；缓存过期时在**后台线程**刷新。
 
@@ -2480,7 +2533,7 @@ def update_status(trigger=True):
     本次先给缓存（可能是空的），下次访问就有新结果；服务启动时也会预热一次。
     """
     global _update_checking
-    st = _read_update_cache()
+    st = _rebase_update_cache(_read_update_cache())
     if trigger and _update_cache_stale(st):
         with _update_lock:
             if not _update_checking:

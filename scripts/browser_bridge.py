@@ -151,8 +151,62 @@ def write_last_channel(channel):
         pass
 
 
+def confirm_pref_channel(channel):
+    """登录成功后：若用户偏好还是「auto」，把它固化为**这次实际登录的浏览器**。
+
+    「auto」只是首次安装的初始态；一旦登录确定了用哪个浏览器，配置就该变成
+    明确的值（用户再看设置是 Edge/Chrome，而非模糊的 auto）。若用户已手动
+    指定过（非 auto），则不覆盖。
+    """
+    try:
+        import json
+        cfg_path = os.path.join(_data_dir(), "config.json")
+        cfg = {}
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except Exception:
+            pass
+        if cfg.get("browser_channel", "auto") != "auto":
+            return
+        if channel not in CHANNEL_PROFILE_SUFFIX:
+            return
+        cfg["browser_channel"] = channel
+        os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+        tmp = cfg_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, cfg_path)
+    except Exception:
+        pass
+
+
+def read_pref_channel():
+    """用户手动指定的取数浏览器偏好（config.json 的 browser_channel）。
+
+    值须为 CHANNEL_PROFILE_SUFFIX 里的 chrome/msedge；auto 或缺失 = 自动。
+    这是**显式选择**，优先级高于「记住上次登录的浏览器」。
+    """
+    try:
+        import json
+        cfg_path = os.path.join(_data_dir(), "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        v = (d or {}).get("browser_channel", "")
+        return v if v in CHANNEL_PROFILE_SUFFIX else ""
+    except Exception:
+        return ""
+
+
 def channel_candidates():
-    """launch 的候选顺序：上次登录成功的浏览器最优先（cookie 连续），其余按默认序。"""
+    """launch 的候选顺序：
+    ① 用户手动指定的浏览器（若有，显式选择最优先）
+    ② 上次登录成功的浏览器（cookie 连续）
+    ③ 默认序（Edge 优先、Chrome 回退）。
+    """
+    pref = read_pref_channel()
+    if pref:
+        return [pref] + [c for c in BROWSER_CHANNELS if c != pref]
     last = read_last_channel()
     return ([last] if last else []) + [c for c in BROWSER_CHANNELS if c != last]
 
@@ -437,7 +491,6 @@ class BrowserBridge:
             GWL_EXSTYLE = -20
             WS_EX_TOOLWINDOW = 0x00000080
             WS_EX_APPWINDOW = 0x00040000
-            SWP_FLAGS = 0x0001 | 0x0002 | 0x0004 | 0x0020   # NOSIZE|NOMOVE|NOZORDER|FRAMECHANGED
             get_wl = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
             set_wl = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
             hits = []
@@ -452,19 +505,16 @@ class BrowserBridge:
 
             user32.EnumWindows(proto(_cb), 0)
             for hwnd in hits:
+                # 静默窗口直接 SW_HIDE 彻底隐藏（**不再恢复显示**）。取数走 CDP
+                # （page.evaluate）与窗口可见性无关，实测隐藏后实时取数正常。
+                # 此前「TOOLWINDOW + SW_HIDE→SW_SHOWNA」对 Edge 不可靠：SW_SHOWNA
+                # 把窗口显示回来后任务栏图标也跟着回归（实测反复踩坑）。故这里
+                # 仅保留 TOOLWINDOW 作防御，靠 SW_HIDE 让窗口从任务栏/Alt-Tab 彻底消失。
                 style = get_wl(hwnd, GWL_EXSTYLE)
                 set_wl(hwnd, GWL_EXSTYLE, (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
-                if user32.IsWindowVisible(hwnd):
-                    # ⚠️ 任务栏不监听窗口样式变化 —— 按钮在窗口创建时就建好了，
-                    # 改样式必须走一轮「隐藏 → 重显示」才会被 shell 重新评估并移除
-                    # （实测只发 FRAMECHANGED 不够）。SW_SHOWNA 显示但不抢焦点；
-                    # 窗口本就在屏幕外，用户全程无感知。
-                    user32.ShowWindow(hwnd, 0)    # SW_HIDE
-                    user32.ShowWindow(hwnd, 8)    # SW_SHOWNA
-                else:
-                    user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FLAGS)
+                user32.ShowWindow(hwnd, 0)    # SW_HIDE
             if hits:
-                self.log("静默浏览器窗口已移出任务栏（%d 个窗口）" % len(hits))
+                self.log("静默浏览器窗口已彻底隐藏（%d 个窗口）" % len(hits))
         except Exception as e:
             self.log("隐藏任务栏图标失败（不影响取数）: %s" % e)
 
@@ -629,6 +679,8 @@ class BrowserBridge:
                     if info.get("expires_at") and not info.get("expired"):
                         # 记住登录用的浏览器：下次 launch 最优先用它，保证 cookie 连续
                         write_last_channel(self._channel)
+                        # 若用户偏好还是「auto」，固化为这次实际登录的浏览器
+                        confirm_pref_channel(self._channel)
                         return True, "登录成功"
                 except Exception:
                     pass

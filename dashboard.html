@@ -1142,6 +1142,7 @@
         : '<div class="set-note">内置数据已收录 ' + yrs + ' 年'
           + (hm.updated_at ? ' · 更新于 ' + hm.updated_at : '') + '。</div>';
     }
+    const bc = (DATA && DATA.browser_channel) || 'auto';
     const mask = document.createElement('div');
     mask.className = 'expiry-mask';
     mask.innerHTML =
@@ -1158,6 +1159,16 @@
             'style="width:100%;" value="' + ((DATA && DATA.daily_avg_window) || 30) + '">' +
           '<div class="set-note">「预计可用天数」按近 N 天日均消耗估算（N = 此窗口）。' +
             '太短会被短期波动主导（实测 7 天 → 结果荒谬），默认 30 天，范围 7~90。</div>' +
+        '</div>' +
+        '<div class="set-block">' +
+          '<label class="set-label">取数浏览器（保持会话用）</label>' +
+          '<select class="select-input" id="browser-channel" style="width:100%;">' +
+            '<option value="auto"' + (bc === 'auto' ? ' selected' : '') + '>自动（首次使用，登录后自动确定）</option>' +
+            '<option value="chrome"' + (bc === 'chrome' ? ' selected' : '') + '>Google Chrome</option>' +
+            '<option value="msedge"' + (bc === 'msedge' ? ' selected' : '') + '>Microsoft Edge</option>' +
+          '</select>' +
+          '<div class="set-note">取数靠借这个浏览器的登录会话。指定浏览器后始终用它；' +
+            '切换浏览器后首次需重新登录一次（各浏览器独立保存会话），保存后重启服务生效。</div>' +
         '</div>' +
         '<div class="set-block">' +
           '<label class="set-label">我通常上班的日子</label>' +
@@ -1199,16 +1210,24 @@
       // 观测窗口写后端（统计口径在服务端算，保持单一口径），写完再重载
       const _aw = parseInt(mask.querySelector('#avg-window').value, 10);
       const aw = isNaN(_aw) ? 30 : _aw;
+      const _bc = mask.querySelector('#browser-channel').value;
       mask.remove();
-      fetch('/api/set-config?key=avg_window_days&value=' + aw, { cache: 'no-store' })
-        .then(function (r) { return r.json(); })
-        .catch(function () { return { ok: false, message: '无法连接本地服务' }; })
-        .then(function (res) {
-          if (res && res.ok === false) {
-            alert('观测窗口未保存：' + ((res && res.message) || '未知原因'));
-          }
-          location.reload();   // 这些设置决定"首屏要不要弹框"，重载最省事也最不易漏
-        });
+      const put = function (url) {
+        return fetch(url, { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .catch(function () { return { ok: false, message: '无法连接本地服务' }; });
+      };
+      // 观测窗口 + 取数浏览器都写后端，写完再重载（浏览器切换需重启服务才真正生效）
+      Promise.all([
+        put('/api/set-config?key=avg_window_days&value=' + aw),
+        put('/api/set-config?key=browser_channel&value=' + _bc),
+      ]).then(function (res) {
+        const bad = res.filter(function (x) { return !x || x.ok === false; });
+        if (bad.length) {
+          alert('部分设置未保存：' + ((bad[0] && bad[0].message) || '未知原因'));
+        }
+        location.reload();   // 这些设置决定"首屏要不要弹框"，重载最省事也最不易漏
+      });
     });
   }
 
@@ -2508,6 +2527,19 @@
       sb.textContent = '无法连接本地服务：请双击桌面「积分工作台」启动器（或运行 '
         + 'python scripts/serve.py）后刷新页面。';
       sb.style.display = 'block';
+    });
+  }
+
+  // 页面存活心跳：告知服务端「工作台还开着」。关闭本页（标签页/窗口）后，
+  // 服务端超时未收到心跳会自动退出后台（服务 + 浏览器桥一并清理）。
+  if (!isStaticMode()) {
+    setInterval(function () {
+      fetch('/api/heartbeat', { cache: 'no-store' }).catch(function () {});
+    }, 25000);
+    // 关闭标签页时主动告别（pagehide 在关闭/切走时触发，冻结不触发）——
+    // 用 sendBeacon 保证请求发出，服务端据此快速清理，且能区分「关闭」vs「冻结」。
+    window.addEventListener('pagehide', function () {
+      try { navigator.sendBeacon('/api/bye'); } catch (e) {}
     });
   }
 
