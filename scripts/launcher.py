@@ -253,6 +253,22 @@ def _find_serve_python():
     return None
 
 
+def _find_launcher_pythonw():
+    """挑一个装了 Playwright 的解释器对应的 pythonw，用于**双击启动器 VBS**。
+
+    为什么不用 sys.executable 推导：VBS 通常在 Agent 首次打开工作台时生成，那一刻
+    launcher 由 WorkBuddy 内置 pythonw 执行 —— 若照搬内置 pythonw 进 VBS，双击就会先
+    启动内置解释器（无 Playwright）再让 launcher 去探测系统解释器，多一层冷启动与探测。
+    这里直接选装了 Playwright 的解释器（默认即「本机那个」），让 VBS 一步到位用对解释器。
+    """
+    exe = _find_serve_python()
+    if not exe:
+        return None
+    d = os.path.dirname(exe)
+    pw = os.path.join(d, "pythonw.exe")
+    return pw if os.path.exists(pw) else exe
+
+
 def _notify(msg):
     """双击场景没有控制台 —— 弹系统提示框，否则用户只看到「转圈」而无从得知原因。"""
     if sys.platform == "win32":
@@ -271,7 +287,7 @@ def _spawn():
     if not exe:
         return False, ("未找到安装了 Playwright 的 Python 解释器 —— 浏览器桥依赖它取数。\n\n"
                        "请在命令行执行一次：\n    pip install playwright\n\n"
-                       "（浏览器直接用系统 Chrome，无需再下载内核）")
+                       "（浏览器直接用系统 Edge 或 Chrome，无需再下载内核）")
     subprocess.Popen([exe, SERVE, str(PORT)], **_detach_kwargs())
     return True, exe
 
@@ -330,7 +346,7 @@ def gen_vbs():
         print("双击启动器仅支持 Windows（当前平台：%s）" % sys.platform, file=sys.stderr)
         return 1
     launcher = os.path.abspath(__file__)
-    pythonw = _find_pythonw()
+    pythonw = _find_launcher_pythonw() or _find_pythonw()
     # VBS 内容纯 ASCII，避免 wscript 按 GBK 读 UTF-8 中文注释导致的编码坑
     vbs = (
         "Set ws = CreateObject(\"WScript.Shell\")\r\n"

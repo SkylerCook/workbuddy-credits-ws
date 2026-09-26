@@ -428,6 +428,29 @@ WorkBuddy 客户端自 2026-09-26 起把凭据**加密落盘**，本技能原先
 
 ## 九、更新日志
 
+### v1.7.4 — 浏览器桥兼容 Edge（Edge 优先）；双击启动器直接用系统 Python
+
+**两个改动，目的都是「降低安装 / 使用门槛」**：
+
+**一、浏览器桥兼容 Edge（Edge 优先、Chrome 回退）**
+
+此前桥写死 `channel="chrome"`，机器只有 Edge（Windows 默认自带）时会在启动阶段报「找不到 Chrome」。
+Edge 同为 Chromium 内核，Playwright 官方支持 `channel="msedge"`，桥的 headful + 窗口移屏 + 会话机制对它一样成立。
+
+- 浏览器候选改为 `["msedge", "chrome"]`：**优先 Edge**（Windows 自带、零安装），没装 Edge 时自动回退 Chrome。
+- `channel` 别名不存在时在 launch 阶段即抛异常（尚未锁 profile），换候选是安全的。
+- Firefox 不兼容 —— Playwright 的 Firefox 是自带 Gecko 内核，本桥的会话机制只针对 Chromium 系实测。
+- 实测：本机 `chrome`（153.0.8010.53）与 `msedge`（153.0.4234.48）两个 channel 都能正常驱动。
+
+**二、双击启动器 VBS 直接用系统 Python**
+
+此前 `gen_vbs()` 照搬内置 pythonw 进 VBS，双击后先冷启动内置解释器（无 Playwright）再让 launcher 去探测系统解释器，多一层中转。
+
+- 新增 `_find_launcher_pythonw()`：探测装了 Playwright 的解释器、取其 `pythonw.exe` 写进 VBS。
+- 双击一步到位用系统 Python（默认即「playwright 用的那个」），不再内置中转。
+
+**三、SKILL.md 新增「安装前置」清单**：把运行环境要求（Windows / Python 3 / Playwright / 浏览器 / 账号 / 网络）集中成一节放在顶部，并明确「不用装 Node、内核，无需抓包拿 token」「首次登录一次、约 7 天复用」。
+
 ### v1.7.3 — 「积分批次」标出落在法定节假日的批次（工作日历此前没接到表上）
 
 **问题**：v1.7.0 做了工作日历（用于到期提醒顺延），但批次表的到期标识**仍旧只按日历天**

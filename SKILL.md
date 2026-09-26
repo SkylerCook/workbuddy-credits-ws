@@ -8,7 +8,27 @@ agent_created: true
 
 ## 概述
 
-借**官网已登录的浏览器会话**（独立 profile 的 Chrome，窗口落在屏幕坐标系外）调用官方积分接口，提供积分查询、签到（命令行或工作台按钮，无需打开 WorkBuddy）、余额快照、过期浪费分析，以及一个可视化工作台（`dashboard.html`）。凭据（HttpOnly `session` cookie）始终留在浏览器内，本技能不接触明文。
+借**官网已登录的浏览器会话**（独立 profile 的 Edge/Chrome，窗口落在屏幕坐标系外）调用官方积分接口，提供积分查询、签到（命令行或工作台按钮，无需打开 WorkBuddy）、余额快照、过期浪费分析，以及一个可视化工作台（`dashboard.html`）。凭据（HttpOnly `session` cookie）始终留在浏览器内，本技能不接触明文。
+
+## 安装前置（运行环境要求）
+
+本 skill 取数依赖**浏览器桥**（借官网已登录会话），装好后需要以下环境才能真正出数据：
+
+| 项 | 要求 | 说明 |
+|---|---|---|
+| 操作系统 | Windows | 双击启动器、进程管理、窗口移屏均为 Windows 专属 |
+| Python | Python 3（任意版本） | 脚本只用标准库 |
+| 第三方库 | **Playwright** | 唯一硬依赖，装法：`pip install playwright` |
+| 浏览器 | Microsoft Edge（优先，Windows 自带）或 Google Chrome | 复用系统浏览器，**无需** `playwright install` 下载内核 |
+| 账号 | 能登录 workbuddy.cn 的账号 | 首次在桥弹出的窗口登录一次，之后约 7 天复用 |
+| 网络 | 能访问 `www.workbuddy.cn` | 取数默认直连、不读系统/环境代理 |
+
+几个关键点：
+
+- **不用装** Node、数据库、浏览器内核（即不需要 `playwright install`）；**也不需要**抓包或拿 token —— 凭据（HttpOnly `session` cookie）始终留在浏览器里，本技能不接触明文。
+- **解释器要用装了 Playwright 的那个**（通常是系统 Python，不是 WorkBuddy 内置 Python）：双击启动器会**自动探测**；手动 `python scripts/serve.py` 时需自己确认当前解释器有 `playwright`。
+- **首次要登录一次**：桥用独立 profile（`~/.workbuddy/workbuddy-credits-data/browser_profile`）打开官网，第一次会弹一个可见的浏览器窗口让你登录；之后 7 天自动复用，到期再登。
+- 浏览器桥**优先用 Edge、没装时自动回退 Chrome**（Windows 默认自带 Edge，因此多数机器无需额外装浏览器）。
 
 ## 如何打开工作台（常用入口）
 
@@ -171,7 +191,7 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
 > **取数通道 = 浏览器桥（v1.5.0 起）—— 排查故障先看这条**
 > 客户端已把凭据加密落盘（`auth.accessToken` 变为 AES-GCM 封套，密钥在客户端内），
 > 本技能拿不到明文 token。因此不再直连 API，改为借**官网已登录的浏览器会话**取数：
-> 一个独立 profile 的 Chrome 在 `www.workbuddy.cn` 页面上下文里发
+> 一个独立 profile 的 Edge/Chrome 在 `www.workbuddy.cn` 页面上下文里发
 > `fetch(credentials:'include')`，HttpOnly `session` cookie 由浏览器自动携带。
 >
 > - **凭据不落本进程**：`session` cookie 全程留在浏览器内
@@ -194,7 +214,7 @@ python scripts/workbuddy_credits.py --token         # 登录态摘要（token �
   ⚠️ **WorkBuddy 内置 Python 通常没有 Playwright**，系统 Python 通常有 ——
   用内置解释器跑会出现「面板一直转圈」；v1.5.0 起桥会**快速失败**并明确报
   「当前 Python 解释器未安装 Playwright」，不再卡住。
-- 安装只需一步：`pip install playwright`（浏览器**直接用系统 Chrome**，无需 `playwright install`）。
+- 安装只需一步：`pip install playwright`（浏览器**直接用系统 Edge 或 Chrome**（自动回退），无需 `playwright install` 下载内核）。
 - 旧的直连方式保留在 `WORKBUDDY_TRANSPORT=direct` 下，仅在凭据恢复明文时有意义。
 
 ### 4. 安全约束（重要）

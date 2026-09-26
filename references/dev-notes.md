@@ -63,6 +63,12 @@ cookie 由浏览器自动携带。**本技能不接触、不解析、不落盘�
 2. **Playwright sync API 有线程亲和性** → 桥跑在专用线程里，其他线程经队列提交（actor 模式）
 3. **网关层 HTML 401 = 会话过期**（openresty 返回），≠ 业务错误（业务错误是 JSON `code:xxxx`）
 
+**浏览器来源**：用 `channel` 别名驱动**系统浏览器**（不是 Playwright 自带内核，故**无需**
+`playwright install` 下载内核）。候选顺序 `["msedge", "chrome"]`（2026-09-26 起）：
+**优先 Edge**（Windows 默认自带、零安装），机器没装 Edge 时**自动回退 Chrome**。
+channel 别名不存在时在 launch 阶段即抛异常（此时尚未创建进程 / 锁 profile），换下一个候选是安全的。
+Firefox 不兼容 —— Playwright 的 Firefox 是自带 Gecko 内核，且本桥的会话机制只针对 Chromium 系实测。
+
 ## 三、性能设计（v1.6.0）
 
 桥模式把取数交给浏览器后，**首屏要等 Chrome 冷启动**（3~5s）。三处针对性优化：
@@ -230,6 +236,10 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
   （用内置 Python 跑 `launcher.py`，而不是直接跑 `serve.py`）。
   `launcher.py` 现已自动探测解释器（同目录 → PATH → 注册表 → py launcher），
   挑装了 Playwright 的那个；桥在缺依赖时**秒级报错**（原来会卡满 120s）
+- **VBS 直接写系统 Python**（2026-09-26）：`gen_vbs()` 不再照搬内置 pythonw 进 VBS，
+  而是用 `_find_launcher_pythonw()` 探测装了 Playwright 的解释器、取其 `pythonw.exe` 写进 VBS
+  —— 双击一步到位用系统 Python（默认即「playwright 用的那个」），省去「内置冷启动 + 探测系统」中转。
+  重新生成 VBS 后要读一下确认它指向的是系统 pythonw 而非内置 pythonw
 - **凡"等待就绪"的同步原语，每条退出路径（含异常分支）都必须置位** ——
   漏一个 `_ready.set()` 就把「立即报错」变成「无限转圈」，用户完全无从判断
 - **「端口占用」≠「服务可用」**（v1.4.1 定案）：旧进程会一直占着端口，启动器若只判端口

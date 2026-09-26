@@ -53,6 +53,12 @@ LAUNCH_ARGS_VISIBLE = [
     "--window-size=1100,820",
 ]
 
+# 浏览器候选：**优先 Microsoft Edge**（Windows 默认自带，绝大多数机器零安装），回退 Google Chrome。
+# channel 是 Playwright 的「预装浏览器别名」：msedge=Microsoft Edge、chrome=Google Chrome，
+# 都不是 Playwright 自带的 Chromium（后者才需要 `playwright install` 下载内核）。
+# Edge 同为 Chromium 内核，Playwright 官方支持 channel="msedge"，桥的会话机制对它一样成立。
+BROWSER_CHANNELS = ["msedge", "chrome"]
+
 JS_CALL = """async ([path, body, method]) => {
     const m = method || 'POST';
     const r = await fetch(path, {
@@ -276,10 +282,25 @@ class BrowserBridge:
             raise self._start_error
 
     def _launch(self, p, visible):
-        """启动持久化上下文并停在落地页。返回 (ctx, page)。"""
-        ctx = p.chromium.launch_persistent_context(
-            self.profile_dir, headless=False, channel="chrome",
-            args=LAUNCH_ARGS_VISIBLE if visible else LAUNCH_ARGS)
+        """启动持久化上下文并停在落地页。返回 (ctx, page)。
+
+        优先用 Edge（Windows 自带），机器没装 Edge 时自动回退 Chrome —— channel 别名
+        不存在会在 launch 阶段抛异常（此时尚未创建进程 / 锁定 profile），换候选是安全的。
+        """
+        args = LAUNCH_ARGS_VISIBLE if visible else LAUNCH_ARGS
+        last_err = None
+        for ch in BROWSER_CHANNELS:
+            try:
+                ctx = p.chromium.launch_persistent_context(
+                    self.profile_dir, headless=False, channel=ch, args=args)
+                break
+            except Exception as e:
+                last_err = e
+                continue
+        else:
+            raise RuntimeError(
+                "未找到可用的浏览器（已尝试 Edge / Chrome）：%s。"
+                "请安装 Microsoft Edge 或 Google Chrome。" % (last_err or "未知错误"))
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(self.base_url + LANDING_PATH,
@@ -298,7 +319,7 @@ class BrowserBridge:
                 # （页面表现就是「三个面板一直转圈」，而不是给出有用的错误）。
                 self._start_error = RuntimeError(
                     "当前 Python 解释器未安装 Playwright（%s）。浏览器桥依赖它："
-                    "pip install playwright（浏览器用系统 Chrome，无需再下载内核）" % e)
+                    "pip install playwright（浏览器用系统 Chrome 或 Edge，无需再下载内核）" % e)
                 return
             with sync_playwright() as p:
                 ctx, page = self._launch(p, visible=False)
