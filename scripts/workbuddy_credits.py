@@ -142,6 +142,67 @@ PKG_TIME_RANGE_YEARS = 101    # 已过期查询的时间下界跨度，等价「
 # skill 根目录（脚本位于 <skill>/scripts/ 下）
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DASHBOARD_DATA_FILE = os.path.join(SKILL_DIR, "dashboard_data.js")
+HOLIDAYS_FILE = os.path.join(SKILL_DIR, "assets", "holidays.json")
+
+
+def _read_holidays_file():
+    """读取 assets/holidays.json 原文。文件缺失 / 损坏时返回空 dict（不抛）。"""
+    try:
+        with open(HOLIDAYS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def load_holiday_calendar():
+    """读取内置的中国法定节假日 / 调休上班日（assets/holidays.json）。
+
+    用途**只有一个**：判断某个日期是否属于「用户不会打开工作台的日子」，
+    好把到期提醒顺延到他会看到的时候。**不参与任何消耗口径计算**
+    （原因见 dev-notes「工作日历」一节：用工作日口径算"还能用多少天"会算错）。
+
+    数据缺失（如次年安排尚未公布）时返回空表 —— 前端会降级为"只判周六周日"，
+    不会误判成"天天上班"。
+    """
+    return _read_holidays_file().get("years") or {}
+
+
+def holiday_data_status(today=None):
+    """节假日数据自身的「够不够用」状态 —— 供 UI 提醒用户更新。
+
+    为什么需要：这份表**每年都要更新**（国务院办公厅通常在前一年 11 月公布次年安排），
+    而漏更新的后果是**静默降级**（只剩周六周日判断，识别不出长假与调休），
+    用户不会察觉。所以到点主动提醒一次，而不是指望人记得。
+
+    需要哪几年：**当年** 恒需；进入 **11 月**后连**次年**一起需要
+    （按惯例此时次年安排已公布，再没有就是漏更新了）。
+
+    返回（纯数据，不做是否展示的判断 —— 那取决于用户本地开关，属前端职责）：
+        {"updated_at": str, "years": [int...], "needed": [int...],
+         "missing": [int...], "stale": bool}
+    """
+    raw = _read_holidays_file()
+    have = []
+    for k in (raw.get("years") or {}).keys():
+        try:
+            have.append(int(k))
+        except (TypeError, ValueError):
+            continue
+    have.sort()
+
+    d = today or date.today()
+    needed = [d.year]
+    if d.month >= 11:
+        needed.append(d.year + 1)
+    missing = [y for y in needed if y not in have]
+
+    return {
+        "updated_at": raw.get("updated_at") or "",
+        "years": have,
+        "needed": needed,
+        "missing": missing,
+        "stale": bool(missing),
+    }
 
 
 # ---------- 取数通道 ----------
@@ -1899,6 +1960,8 @@ _PANEL_KEYS = {
         "active_days_30d", "daily_avg_window",
         "checkin", "usage_daily", "income_daily", "ledger", "usage_sessions",
         "expiry_list", "capacity_note", "sources_health",
+        "holidays",        # 到期提醒要按工作日顺延，前端需要这份日历
+        "holiday_meta",    # 该日历覆盖到哪一年（前端据此提醒「该更新次年数据了」）
     ),
     # 消耗明细：请求级大表 + 三项构成 + 对账；顺带回带 KPI 卡依赖的 L5 口径字段
     "requests": (
@@ -2250,8 +2313,103 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         },
         "reconcile": rec,
         "sources_health": health,
+        # 法定节假日 / 调休表：供前端把「到期提醒」顺延到用户会打开工作台的日子。
+        # 纯数据下发，判断逻辑在前端（提醒本来就是"打开工作台"这个前端行为触发的）。
+        "holidays": load_holiday_calendar(),
+        # 这份表自身「够不够用」——到点提醒用户更新次年数据（漏更新会静默降级）
+        "holiday_meta": holiday_data_status(),
     }
     return data, None
+
+
+# ---------- 版本检查（工作台提示「有新版本」）----------
+# 为什么查在**服务端**而不是浏览器：① 浏览器直打 api.github.com 会受 CORS 与代理影响；
+# ② 结果缓存到数据目录，多页面 / 多刷新只联网一次。
+# 为什么只提示、不提供「一键更新」按钮：**改本地文件必须由用户显式触发** ——
+# 升级动作是 `python update.py`（Release 包 + sha256 校验 + 自动重启服务）。
+# 这里的职责仅是「让用户知道有新版本」，所以它永远不改任何本地文件。
+UPDATE_REPO = "https://github.com/SkylerCook/workbuddy-credits-ws"   # 与 update.py 的 DEFAULT_REPO 一致
+UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "update_check.json")
+UPDATE_CHECK_TTL = 12 * 3600      # 检查成功：12 小时内不重复联网
+UPDATE_CHECK_FAIL_TTL = 1800      # 检查失败：30 分钟内不重试（避免每次开页面都卡网）
+
+_update_lock = threading.Lock()
+_update_checking = False
+
+
+def _read_update_cache():
+    try:
+        with open(UPDATE_CHECK_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_update_cache(status):
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = UPDATE_CHECK_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(status, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, UPDATE_CHECK_FILE)
+    except Exception:
+        pass
+
+
+def refresh_update_status():
+    """联网检查一次并写缓存。**任何异常都转成 state='error'**（绝不向上抛）。
+
+    取数与版本比较直接复用 `update.py`（`latest_release` / `cmp_version`）——
+    否则会出现两套版本比较逻辑，早晚对不上。
+    """
+    st = {"checked_at": int(time.time()), "local": VERSION}
+    try:
+        import update as upd
+        rel = upd.latest_release(UPDATE_REPO)
+        state = upd.cmp_version(VERSION, rel.get("version") or "")
+        st.update({
+            "state": state if state in ("newer", "same", "older") else "unknown",
+            "remote": (rel.get("version") or "").lstrip("vV"),
+            "tag": rel.get("tag") or "",
+            "published": rel.get("published") or "",
+            "url": rel.get("html_url") or "",
+            "notes": (rel.get("notes") or "")[:2000],
+        })
+    except Exception as e:
+        st.update(state="error", reason="%s: %s" % (type(e).__name__, e))
+    _write_update_cache(st)
+    return st
+
+
+def _update_cache_stale(st):
+    ts = st.get("checked_at") or 0
+    ttl = UPDATE_CHECK_FAIL_TTL if st.get("state") == "error" else UPDATE_CHECK_TTL
+    return (time.time() - ts) > ttl
+
+
+def update_status(trigger=True):
+    """版本状态。**立即返回**（可能来自缓存）；缓存过期时在**后台线程**刷新。
+
+    关键约束：**联网绝不发生在请求线程里** —— 否则一次 GitHub 不通就会让页面卡住。
+    本次先给缓存（可能是空的），下次访问就有新结果；服务启动时也会预热一次。
+    """
+    global _update_checking
+    st = _read_update_cache()
+    if trigger and _update_cache_stale(st):
+        with _update_lock:
+            if not _update_checking:
+                _update_checking = True
+
+                def _bg():
+                    global _update_checking
+                    try:
+                        refresh_update_status()
+                    finally:
+                        _update_checking = False
+
+                threading.Thread(target=_bg, name="wb-update-check", daemon=True).start()
+    return st
 
 
 def strip_prompts(data):

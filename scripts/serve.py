@@ -10,6 +10,7 @@ serve.py —— 积分工作台本地服务：提供可刷新的工作台。
 接口：
   GET /                     工作台页面
   GET /api/version          版本号（瞬时，不打上游）
+  GET /api/update           是否有新版本（**只读缓存**；联网在后台线程，缓存 12h）
   GET /api/overview         概览：KPI / 图表 / 账本 / 会话 / 批次 / 签到
   GET /api/requests         消耗明细：请求级大表 + 构成 + 对账
   GET /api/lifecycle        包生命周期：有效期内 / 已过期 + 权威浪费
@@ -288,6 +289,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/version":
             # 瞬时返回，不打上游：页头版本号要立刻可见
             self._send_json({"version": wc.VERSION, "ok": True})
+        elif path == "/api/update":
+            # 是否有新版本：**只读缓存**（联网在后台线程做，结果缓存 12h）。
+            # 本接口永不阻塞、不修改任何本地文件 —— 升级由用户显式跑 update.py。
+            self._send_json(wc.update_status())
         elif path in ("/api/overview", "/api/requests", "/api/lifecycle"):
             panel = path.rsplit("/", 1)[-1]
             self._send_json(build_panel_json(panel, fresh=self._fresh_flag(qs)))
@@ -361,6 +366,11 @@ def main():
             if wc.bridge_enabled() else "直连 API"))
         # 预热：后台拉起浏览器 + 预取四源，免得首屏干等 3~5s 冷启动
         threading.Thread(target=_warmup, name="wb-warmup", daemon=True).start()
+        # 顺带预热一次版本检查：它也是后台线程，等用户打开页面时缓存通常已就绪
+        try:
+            wc.update_status(trigger=True)
+        except Exception:
+            pass
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

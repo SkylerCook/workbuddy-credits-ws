@@ -124,6 +124,13 @@
   .card.green::before { background: var(--green); }
   .card.amber::before { background: var(--amber); }
   .card.red::before { background: var(--red); }
+  /* 假期内到期：单独一张卡（原先只写在「即将到期」的副标题里，太不显眼）。
+     用紫色与表内 due-holiday 行标记同一套视觉语言。 */
+  .card.holiday { background: #faf8ff; }
+  .card.holiday::before { background: #7c3aed; }
+  .card.holiday .ic { background: #f1ecff; color: #7c3aed; }
+  .card.holiday .value { color: #5b21b6; }
+  .card.holiday .sub { color: #6d28d9; }
   .card-head { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
   .card-head .ic { width: 22px; height: 22px; border-radius: 6px; display: flex; align-items: center; justify-content: center; background: #eef4ff; color: var(--primary); }
   .card.green .ic { background: #e7f8f0; color: var(--green); }
@@ -158,16 +165,39 @@
   tbody tr:hover { background: #f8fafc; }
 
   /* ---------- 批次表：临近到期的行标识 ---------- */
-  /* 阈值与概览卡「即将到期（7天内）」同口径（后端 compute_waste.soon_days）：
-     表里被标记的行数应当**等于** at_risk_count —— 对不上就说明两处口径写岔了。 */
+  /* 两档口径，互不重叠：
+     · due-soon / due-urgent —— **日历天** ≤7 / ≤3，与概览卡「即将到期（7天内）」
+       同口径（后端 compute_waste.soon_days）：这两类的行数应当**等于** at_risk_count，
+       对不上就说明两处口径写岔了。
+     · due-holiday —— **超出 7 天但落在法定节假日**（v1.7.3 新增）。不参与上面那条判据：
+       日历天会低估这类批次的紧迫感 —— 假期里用户不会打开工作台，
+       可处理的工作日远少于天数（10/4 到期，中间隔着国庆 7 天假，实际只剩 3 个工作日）。 */
   tbody tr.due-soon > td   { background: #fffaeb; }
   tbody tr.due-urgent > td { background: #fff4f2; }
+  tbody tr.due-holiday > td { background: #f7f4ff; }
   tbody tr.due-soon > td:first-child,
   tbody tr.due-urgent > td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
   tbody tr.due-urgent > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+  tbody tr.due-holiday > td:first-child { box-shadow: inset 3px 0 0 #7c3aed; }
   .due-tag { margin-left: 6px; padding: 1px 7px; border-radius: 20px; font-size: 11px; white-space: nowrap; }
   .due-tag.soon   { background: #fff3d6; color: #8a6100; border: 1px solid #f0d9a8; }
   .due-tag.urgent { background: #ffe4e0; color: #a5342a; border: 1px solid #f2bcb5; }
+  .due-tag.holiday { background: #ede9fe; color: #5b21b6; border: 1px solid #ddd6fe; }
+
+  /* 批次表的「假期内到期」汇总提示：把逐条的紫色标记换算成一句可行动的话 */
+  .gap-note {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin-bottom: 12px; padding: 9px 12px; border-radius: 10px;
+    background: #f7f4ff; border: 1px solid #ddd6fe; color: #4c1d95;
+    font-size: 12.5px; line-height: 1.6; text-align: left;
+  }
+  .gap-note .gn-ico {
+    width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%;
+    background: #7c3aed; color: #fff; font-size: 11px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .gap-note .gn-txt { flex: 1 1 380px; }
+  .gap-note b { color: #5b21b6; }
   .num { font-variant-numeric: tabular-nums; font-family: ui-monospace, Consolas, monospace; }
   .pos { color: var(--green); }
   .neg { color: var(--red); }
@@ -212,14 +242,26 @@
   .expiry-modal h3 .warn-ic { width: 26px; height: 26px; border-radius: 8px; background: #fef3c7; color: var(--amber); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
   .expiry-modal h3 .checkin-ic { width: 26px; height: 26px; border-radius: 8px; background: #ecfdf5; color: var(--green); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 15px; font-weight: 700; }
   .expiry-modal p { font-size: 13.5px; color: var(--text); line-height: 1.7; margin-bottom: 6px; }
-  .expiry-modal .expiry-rows { margin: 10px 0 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-  .expiry-modal .expiry-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
+  .expiry-modal .expiry-rows { margin: 10px 0 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }  .expiry-modal .expiry-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
   .expiry-modal .expiry-row:last-child { border-bottom: none; }
   .expiry-modal .expiry-row .lbl { color: var(--text); }
   .expiry-modal .expiry-row .val { color: var(--title); font-weight: 600; }
   .expiry-modal .expiry-row .val.red { color: var(--red); }
   .expiry-modal .expiry-actions { display: flex; gap: 10px; justify-content: flex-end; }
   .expiry-modal .expiry-actions .btn { font-size: 13px; }
+
+  /* ---------- 提醒设置：上班日选择 ---------- */
+  .expiry-modal .set-label { font-size: 12.5px; color: var(--text); display: block; margin-bottom: 6px; }
+  .expiry-modal .set-block { margin: 12px 0 16px; }
+  .expiry-modal .set-note { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+  .wd-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .wd-chip {
+    width: 34px; height: 30px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: #fff; color: var(--muted);
+    font-family: inherit; font-size: 12.5px; transition: all .12s;
+  }
+  .wd-chip:hover { border-color: var(--primary); }
+  .wd-chip.on { background: var(--primary); border-color: var(--primary); color: #fff; }
 
   /* ---------- 数据源健康徽章 ---------- */
   .health-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
@@ -305,6 +347,39 @@
     background: #fff; border: 1px solid #fde68a; border-radius: 4px;
     padding: 0 4px; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
   }
+
+  /* ---------- 顶部通知条（两个来源共用：节假日数据该更新 / 有新版本） ----------
+     默认警示色（amber）用于「需要你处理的事」；.info 用于「对你有好处的事」 */
+  .notice {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 9px 12px; margin-bottom: 14px; border-radius: 10px;
+    background: #fffbeb; border: 1px solid #fde68a; color: var(--text);
+    font-size: 12.5px; line-height: 1.6; text-align: left;
+  }
+  .notice .nt-ico {
+    width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%;
+    background: var(--amber); color: #fff; font-size: 11px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .notice .nt-txt { flex: 1 1 340px; }
+  .notice .nt-txt b { color: #b45309; }
+  .notice code {
+    background: #fff; border: 1px solid #fde68a; border-radius: 4px;
+    padding: 0 4px; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px;
+  }
+  .notice .nt-btn {
+    flex-shrink: 0; border: 1px solid #fcd34d; background: #fff; color: #92400e;
+    border-radius: 7px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  }
+  .notice .nt-btn:hover { background: #fef3c7; }
+
+  /* 信息态：新版本可用 —— 这不是"问题"，用主色而不是警示色 */
+  .notice.info { background: #eff6ff; border-color: #bfdbfe; }
+  .notice.info .nt-ico { background: var(--primary); }
+  .notice.info .nt-txt b { color: var(--primary); }
+  .notice.info code { border-color: #bfdbfe; }
+  .notice.info .nt-btn { border-color: #93c5fd; color: var(--primary); }
+  .notice.info .nt-btn:hover { background: #dbeafe; }
 
   /* 面板加载态：未出数据前给一块轻量骨架，避免"白屏像坏了" */
   .panel-skeleton { padding: 26px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
@@ -420,6 +495,15 @@
 
   <!-- 服务版本提示（旧版服务占着 8090 时，说明已降级为全量模式 + 如何升级） -->
   <div class="svc-note" id="svc-note" style="display:none"></div>
+
+  <!-- 节假日数据更新提醒：这份表每年要更新一次（国务院 11 月前后公布次年安排），
+       漏更新会静默降级为「只判周六周日」——识别不出长假与调休，用户不会察觉。
+       所以到点主动提醒一次，而不是指望人记得。 -->
+  <div class="notice" id="calendar-note" style="display:none"></div>
+
+  <!-- 新版本提示：只提示，不改任何本地文件 —— 升级是显式跑 scripts/update.py
+       （Release 包 + sha256 校验 + 自动重启服务）。检查在服务端后台线程做、结果缓存 12h。 -->
+  <div class="notice info" id="update-note" style="display:none"></div>
 
   <!-- 浏览器会话过期提示：桥模式下凭据由浏览器持有（HttpOnly session，约 7 天绝对过期），
        这里提供一键重新登录 —— 登录后无需重启工作台 -->
@@ -542,6 +626,8 @@
         </select>
       </div>
     </div>
+    <!-- 「假期内到期」汇总：把表里的紫色标记换算成一句可行动的话（逐条看行容易漏在假期里的批次） -->
+    <div class="gap-note" id="batch-hint" style="display:none"></div>
     <table data-page-node-id="ojwqlRTpC1w4GjVH1WQkJP">
       <thead data-page-node-id="3edH4XHASUKUSA6icx49ym"><tr data-page-node-id="V4lcq6oACnGKED0BqS3VXN"><th data-page-node-id="SgkcPV3B9ahYUNYGIawybw">到期时间</th><th data-page-node-id="6Dx8fpiFIWhEMXPGzBcDD2">状态</th><th data-page-node-id="iynD2siUIbgWJm8NtdtJmK">剩余</th><th data-page-node-id="fyXBHXZlLYdSHQ3l92OWvL">已用/总量</th><th data-page-node-id="JWwLG93w1oRaVhBaKGqTds">类型</th></tr></thead>
       <tbody id="expiry-tbody" data-page-node-id="2ZSKZYJz0iX9EeRZtg1u0I"></tbody>
@@ -688,17 +774,175 @@
     return (h % 24 === 0) ? (h / 24) + ' 天' : h + ' 小时';
   }
 
+  // ---------- 工作日历 ----------
+  // **只用于决定「什么时候提醒」**，不参与任何消耗口径计算 ——
+  // 原因：用工作日算「还能用多少天」会算错（日子是日历天在流逝，不是工作日在流逝）。
+  //
+  // 为什么需要：批次若在周末/长假到期，那几天用户不会打开工作台，等他回来可能已经过期。
+  // 所以「还剩几个工作日」比「还剩几小时」更贴近真实可处理的时间。
+  const WORKDAYS_KEY = 'credits_work_weekdays';      // "1,2,3,4,5"（ISO：1=周一 … 7=周日）
+  const USE_HOLIDAYS_KEY = 'credits_use_holidays';   // '1' = 按国务院安排顺延
+
+  function getWorkWeekdays() {
+    const arr = String(lsGet(WORKDAYS_KEY, '1,2,3,4,5')).split(',')
+      .map(function (x) { return parseInt(x, 10); })
+      .filter(function (x) { return x >= 1 && x <= 7; });
+    return arr.length ? arr : [1, 2, 3, 4, 5];
+  }
+  function getUseHolidays() { return lsGet(USE_HOLIDAYS_KEY, '1') === '1'; }
+  function isoDay(d) { const w = d.getDay(); return w === 0 ? 7 : w; }
+
+  // 某天是否是我的工作日。判断顺序：**调休上班 → 法定放假 → 我勾选的星期几**。
+  // 调休必须排在放假判断之前，否则「落在放假区间里的调休上班日」会被判错。
+  function isWorkday(date, cal) {
+    const md = ('0' + (date.getMonth() + 1)).slice(-2) + '-' + ('0' + date.getDate()).slice(-2);
+    const c = (cal || {})[String(date.getFullYear())];
+    if (c && getUseHolidays()) {
+      if (c.makeup_workdays && c.makeup_workdays[md]) return true;
+      if (c.holidays && c.holidays[md]) return false;
+    }
+    return getWorkWeekdays().indexOf(isoDay(date)) >= 0;
+  }
+
+  // 从 from（含，默认今天）到目标日（不含）之间还剩几个工作日 —— 即"我还能处理几次"。
+  // 长假期间这段会骤降为 0，于是假期前最后一个工作日就会触发提醒。
+  // fromDate 可传，为的是**能被测试**（否则只能等到假期前那天才能验证）。
+  function workdaysUntil(targetMs, cal, fromDate) {
+    const end = new Date(targetMs);
+    const last = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    let n = 0;
+    const cur = fromDate ? new Date(fromDate) : new Date();
+    cur.setHours(0, 0, 0, 0);
+    for (; cur < last; cur.setDate(cur.getDate() + 1)) {
+      if (isWorkday(cur, cal)) n++;
+    }
+    return n;
+  }
+
+  // 剩余工作日阈值：默认 1（"只剩今天能处理了"）；0 = 关掉这条，只按小时窗口提醒。
+  function getAlertWorkdays() {
+    const v = parseInt(lsGet('credits_expiry_alert_workdays', '1'), 10);
+    return isNaN(v) ? 1 : v;
+  }
+
+  // 暴露只读的工作日历能力（纯函数、无副作用）——
+  // 排查「为什么这天没提醒」时可以直接在控制台核对判断结果。
+  window.CREDITS_CAL = {
+    isWorkday: isWorkday,
+    workdaysUntil: workdaysUntil,
+    weekdays: getWorkWeekdays,
+    useHolidays: getUseHolidays,
+  };
+
+  // ---------- 节假日数据「够不够用」提醒 ----------
+  // 为什么要主动提醒：assets/holidays.json 每年年底要追加次年安排（国务院通常 11 月公布），
+  // 漏更新的后果是**静默降级** —— 只剩周六周日判断，识别不出长假与调休，而用户毫无察觉。
+  // 关闭状态按「缺失年份」记录：年份集合变化（比如又缺了下一年）会重新提醒，
+  // 不会点一次「知道了」就永远沉默。
+  const HOLIDAY_NOTICE_KEY = 'credits_holiday_notice_dismissed';
+
+  function renderHolidayNote(meta) {
+    const el = document.getElementById('calendar-note');
+    if (!el) return;
+    function hide() { el.style.display = 'none'; el.innerHTML = ''; }
+
+    // 用户没启用「按国务院安排顺延」→ 这份表对他不产生任何作用，不打扰
+    if (!meta || !meta.stale || !getUseHolidays()) { hide(); return; }
+    const sig = (meta.missing || []).join(',');
+    if (!sig || lsGet(HOLIDAY_NOTICE_KEY, '') === sig) { hide(); return; }
+
+    const missing = meta.missing || [];
+    const thisYear = new Date().getFullYear();
+    // 只缺次年 = 常规的"该更新了"；当年也缺 = 跨年一直没升级，降级更久
+    // 行动指引统一到「升级」：这份数据随版本分发，用户不该去改 skill 包内的文件
+    //（改了下一次同步/升级还会被覆盖）—— 所以只说"升级到含该年数据的版本"。
+    const onlyNext = missing.indexOf(thisYear) < 0;
+    const howto = '（对 Agent 说「<b>更新积分 skill</b>」即可升级）';
+    const txt = onlyNext
+      ? '<b>' + missing.join(' / ') + ' 年节假日安排通常已在 11 月公布</b>，本版内置数据尚未收录 —— ' +
+        '到期提醒目前只能按周几顺延，<b>识别不出长假与调休</b>。升级到含该年数据的版本后自动恢复' + howto + '。'
+      : '<b>缺少 ' + missing.join(' / ') + ' 年节假日数据</b> —— 到期提醒已降级为只判周六周日，' +
+        '长假与调休识别不了。请升级本 skill 到含该年数据的版本' + howto + '。';
+
+    el.innerHTML =
+      '<span class="nt-ico">!</span>' +
+      '<span class="nt-txt">' + txt + '</span>' +
+      '<button class="nt-btn" id="cal-dismiss">知道了</button>';
+    el.style.display = 'flex';
+    const btn = el.querySelector('#cal-dismiss');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        lsSet(HOLIDAY_NOTICE_KEY, sig);   // 记住"这一组缺失年份我看过了"
+        hide();
+      });
+    }
+  }
+
+  // ---------- 新版本提示 ----------
+  // 只提示，**不改任何本地文件** —— 升级是用户显式跑 `python update.py`
+  //（Release 包 + sha256 校验 + 自动重启服务，见 scripts/update.py）。
+  // 联网检查在服务端后台线程做、结果缓存 12h，所以这个请求打的是本地服务，极快。
+  const UPDATE_NOTICE_KEY = 'credits_update_notice_dismissed';
+
+  function renderUpdateNote(d) {
+    const el = document.getElementById('update-note');
+    if (!el) return;
+    function hide() { el.style.display = 'none'; el.innerHTML = ''; }
+    // 只有"远端更新"才提示；same / older / error / unknown 一律安静
+    if (!d || d.state !== 'newer' || !d.remote) { hide(); return; }
+    if (lsGet(UPDATE_NOTICE_KEY, '') === d.remote) { hide(); return; }
+
+    el.innerHTML =
+      '<span class="nt-ico">↑</span>' +
+      '<span class="nt-txt">有新版本 <b>v' + d.remote + '</b> 可用（当前 v' + d.local + '）' +
+        (d.published ? ' · 发布于 ' + d.published : '') +
+        '。升级：对 Agent 说「<b>更新积分 skill</b>」（或运行 <code>python update.py</code>）。</span>' +
+      '<button class="nt-btn" id="upd-dismiss">知道了</button>';
+    el.style.display = 'flex';
+    const btn = el.querySelector('#upd-dismiss');
+    if (btn) {
+      btn.addEventListener('click', function () {
+        lsSet(UPDATE_NOTICE_KEY, d.remote);   // 记住"这个新版本我看过了"
+        hide();
+      });
+    }
+  }
+
+  function checkUpdate(attempt) {
+    if (isStaticMode()) return;   // 静态版没有本地服务，无从检查（也不该联网）
+    fetchWithTimeout('/api/update', 8000)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        renderUpdateNote(d);
+        // 服务刚起时后台检查可能还没写完缓存 → 稍后再问一次，别让首屏错过提示
+        if ((!d || !d.state) && (attempt || 0) < 1) {
+          setTimeout(function () { checkUpdate((attempt || 0) + 1); }, 8000);
+        }
+      })
+      .catch(function () { /* 检查失败 → 静默：绝不因为"查更新失败"打扰用户 */ });
+  }
+
   function checkExpiryAlert(D) {
     if (expiryAlertShown) return;
     const hours = getAlertHours();
     if (hours <= 0) return;               // 用户已关闭提醒
     const winMs = hours * 3600000;
     const now = Date.now();
-    // 从到期列表筛出「可用且窗口内到期」的批次（按到期时间升序）
-    const soon = (D.expiry_list || []).filter(function (p) {
-      if (p.status !== '可用' || !p.cycle_end) return false;
+    // 从到期列表筛出「可用且需要提醒」的批次。两种任一命中即提醒：
+    //   ① 落在小时窗口内（原有行为）
+    //   ② 剩余**工作日**已到阈值 —— 补上"假期里时间在走、但你没机会处理"这个盲区。
+    //      例：10/8 到期的批次，9/30 看时 24h 窗口够不着，但中间隔着国庆 7 天假，
+    //      工作日数为 0 → 立刻提醒，用户还有 9/30 这一个工作日可以处理。
+    const wdLeft = getAlertWorkdays();
+    const inWindow = function (p) {
       const t = new Date(String(p.cycle_end).replace(' ', 'T')).getTime();
       return !isNaN(t) && t > now && t - now <= winMs;
+    };
+    const soon = (D.expiry_list || []).filter(function (p) {
+      if (p.status !== '可用' || !p.cycle_end) return false;
+      if (inWindow(p)) return true;
+      const t = new Date(String(p.cycle_end).replace(' ', 'T')).getTime();
+      return wdLeft > 0 && !isNaN(t) && t > now && workdaysUntil(t, D.holidays) <= wdLeft;
     }).sort(function (a, b) {
       return new Date(String(a.cycle_end).replace(' ', 'T')) - new Date(String(b.cycle_end).replace(' ', 'T'));
     });
@@ -714,7 +958,11 @@
     mask.innerHTML =
       '<div class="expiry-modal">' +
         '<h3><span class="warn-ic">⚠</span>积分即将到期</h3>' +
-        '<p>你有 <b>' + soon.length + '</b> 批积分将在 <b>' + fmtWindow(hours) + '</b>内到期，涉及 <b style="color:var(--red)">' + total.toFixed(2) + '</b> 积分，过期将作废。</p>' +
+        '<p>你有 <b>' + soon.length + '</b> 批积分' +
+        (soon.some(function (p) { return !inWindow(p); })
+          ? '<b>即将到期</b> —— 按你的工作日历，到期前已没几个工作日可以处理了'
+          : '将在 <b>' + fmtWindow(hours) + '</b>内到期') +
+        '，涉及 <b style="color:var(--red)">' + total.toFixed(2) + '</b> 积分，过期将作废。</p>' +
         (rows ? '<div class="expiry-rows">' + rows + '</div>' : '') +
         '<p style="font-size:12px;color:var(--muted)">建议优先使用即将到期的批次，长周期批次留后。</p>' +
         '<div class="expiry-actions">' +
@@ -782,15 +1030,45 @@
     const sel = opts.map(function (o) {
       return '<option value="' + o[0] + '"' + (String(cur) === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
     }).join('');
+    const days = getWorkWeekdays();
+    const chips = '一二三四五六日'.split('').map(function (ch, i) {
+      const d = i + 1;
+      return '<button type="button" class="wd-chip' + (days.indexOf(d) >= 0 ? ' on' : '')
+        + '" data-wd="' + d + '">' + ch + '</button>';
+    }).join('');
+    // 内置日历覆盖到哪一年 —— 用户主动来设置页时也该看得见（不只在弹条里提醒）
+    const hm = (DATA && DATA.holiday_meta) || null;
+    let hmNote = '';
+    if (hm) {
+      const yrs = (hm.years || []).join(' / ') || '—';
+      hmNote = hm.stale
+        ? '<div class="set-note" style="color:#b45309;">⚠ 内置数据只收录到 ' + yrs
+          + ' 年，缺 ' + (hm.missing || []).join(' / ') + ' 年 —— 到期提醒只能按周几顺延。'
+          + '补充 <code>assets/holidays.json</code> 后恢复。</div>'
+        : '<div class="set-note">内置数据已收录 ' + yrs + ' 年'
+          + (hm.updated_at ? ' · 更新于 ' + hm.updated_at : '') + '。</div>';
+    }
     const mask = document.createElement('div');
     mask.className = 'expiry-mask';
     mask.innerHTML =
       '<div class="expiry-modal">' +
         '<h3><span class="warn-ic">⚙</span>到期提醒设置</h3>' +
         '<p>当有积分批次在所选窗口内到期时，打开工作台会弹框提醒。</p>' +
-        '<div style="margin:12px 0 16px;">' +
-          '<label style="font-size:12.5px;color:var(--text);display:block;margin-bottom:6px;">提醒窗口</label>' +
+        '<div class="set-block">' +
+          '<label class="set-label">提醒窗口</label>' +
           '<select class="select-input" id="alert-hours" style="width:100%;">' + sel + '</select>' +
+        '</div>' +
+        '<div class="set-block">' +
+          '<label class="set-label">我通常上班的日子</label>' +
+          '<div class="wd-row" id="wd-row">' + chips + '</div>' +
+          '<div class="set-note">批次若在你的非工作日到期，提醒会提前到你上班的日子 —— ' +
+            '避免假期里错过（只影响「什么时候提醒」，不影响任何积分统计口径）。</div>' +
+        '</div>' +
+        '<div class="set-block">' +
+          '<label class="set-label" style="display:flex;align-items:center;gap:8px;margin-bottom:0;">' +
+            '<input type="checkbox" id="use-holidays"' + (getUseHolidays() ? ' checked' : '') + '>' +
+            '<span>按国务院节假日安排顺延（含调休）</span></label>' +
+          hmNote +
         '</div>' +
         '<div class="expiry-actions">' +
           '<button class="btn" id="settings-cancel">取消</button>' +
@@ -798,11 +1076,27 @@
         '</div>' +
       '</div>';
     document.body.appendChild(mask);
+    mask.querySelectorAll('.wd-chip').forEach(function (b) {
+      b.addEventListener('click', function () { b.classList.toggle('on'); });
+    });
     mask.querySelector('#settings-cancel').addEventListener('click', function () { mask.remove(); });
     mask.querySelector('#settings-save').addEventListener('click', function () {
       const v = parseInt(mask.querySelector('#alert-hours').value, 10);
       lsSet('credits_expiry_alert_hours', String(isNaN(v) ? 24 : v));
+      const picked = [];
+      mask.querySelectorAll('.wd-chip.on').forEach(function (b) {
+        picked.push(parseInt(b.getAttribute('data-wd'), 10));
+      });
+      if (picked.length) {
+        lsSet(WORKDAYS_KEY, picked.join(','));
+      } else {
+        // 一个都不勾会让「工作日」这个概念失效 → 回退默认并明确告知，不静默糊弄
+        lsSet(WORKDAYS_KEY, '1,2,3,4,5');
+        alert('没有勾选任何上班日 —— 已恢复为「周一至周五」。');
+      }
+      lsSet(USE_HOLIDAYS_KEY, mask.querySelector('#use-holidays').checked ? '1' : '0');
       mask.remove();
+      location.reload();   // 这些设置决定"首屏要不要弹框"，重载最省事也最不易漏
     });
   }
 
@@ -880,6 +1174,27 @@
       (cn.delta_if_cumulative
         ? ' · 已按本周期口径修正 ' + cn.delta_if_cumulative.toFixed(2)
         : '');
+    // 落在法定节假日、超出 7 天窗口的批次 —— **单独一张卡**。
+    // 先前只写在「即将到期」的副标题里（一行灰色小字），存在感太弱 ——
+    // 而它恰恰是最容易被漏掉的那批（假期里不会打开工作台）。
+    // 与「即将到期（7天内）」口径**互斥**，所以两个数字相加不会重复计数。
+    const holDue = holidayDueList(D.expiry_list);
+    let holCard = null;
+    if (holDue.length) {
+      const holNames = {};
+      holDue.forEach(function (p) {
+        const n = holidayName(p.exp_ts);
+        if (n) holNames[n] = 1;
+      });
+      const ds = holDue.map(function (p) { return (p.cycle_end || '').slice(5, 10); }).sort();
+      holCard = {
+        cls: 'holiday', icon: 'cal', label: '假期内到期',
+        value: holDue.length + ' 批',
+        sub: holDue.reduce(function (s, p) { return s + (p.remain || 0); }, 0).toFixed(2)
+          + ' 积分 · ' + Object.keys(holNames).join('、')
+          + '（' + (ds[0] || '—') + ' ~ ' + (ds[ds.length - 1] || '—') + '）',
+      };
+    }
     const cards = [
       { cls: '', icon: 'wallet', label: '可用积分', value: (D.total_remain || 0).toFixed(2), sub: capSub },
       { cls: '', icon: 'bolt', label: '今日已使用', value: D.today_used != null ? D.today_used.toFixed(2) : '—',
@@ -894,6 +1209,7 @@
           : '近 ' + (D.daily_avg_window || 30) + ' 天无消耗' },
       { cls: '', icon: 'chart', label: '累计消耗', value: (D.total_used || 0).toFixed(2), sub: '有效批次已用合计（订阅型按本周期）' },
       { cls: 'amber', icon: 'alert', label: '即将到期（7天内）', value: w.at_risk_count || 0, sub: '涉及 ' + (w.at_risk || 0).toFixed(2) + ' 积分' },
+      holCard,   // 落在法定节假日、超出 7 天窗口的批次；无则为 null（下面 filter 掉）
       { cls: 'red', icon: 'loss', label: '已过期损失',
         value: (((wa && wa.wasted_total) != null ? wa.wasted_total : (w.wasted || 0))).toFixed(2),
         sub: '已过期未用完 ' + (((wa && wa.wasted_count) || w.wasted_count || 0)) + ' 批' + (wa ? ' · 服务端权威' : '') },
@@ -901,7 +1217,7 @@
       authCard,
       // 用户信息（来自 account：nickname / type）
       { cls: '', icon: 'user', label: '当前账号', value: (D.nickname || '-'), sub: (D.account_type === 'personal' ? '个人版' : (D.account_type || '—')) },
-    ];
+    ].filter(Boolean);   // holCard 无数据时为 null
     document.getElementById('sec-overview').innerHTML = cards.map(function (c) {
       return '<div class="card ' + c.cls + '"><div class="card-head">' + ic(c.icon) + '<span>' + c.label + '</span></div>' +
              '<div class="value">' + c.value + '</div><div class="sub">' + c.sub + '</div></div>';
@@ -1046,6 +1362,7 @@
     computeRange();
     syncCheckinBtn(D);
     firstLoadPrompts(D);
+    renderHolidayNote(D.holiday_meta);
     renderOverviewKpis(D);
     renderOverviewCharts(D);
     renderOverviewTables(D);
@@ -1174,10 +1491,26 @@
   // 页面上被标记的行数要等于概览卡「即将到期（7天内）」的数字，否则说明两处写岔了。
   const DUE_URGENT_DAYS = 3;
   const DUE_SOON_DAYS = 7;
+  // 「假期内到期」只看一个月内的假期 —— 更远的（如明年的春节）标了没有行动意义
+  const DUE_HOLIDAY_MAX_DAYS = 30;
 
   function dueText(days) {
     const d = Math.ceil(days);
     return d <= 0 ? '今天到期' : (d + ' 天后到期');
+  }
+
+  // 到期日是否落在**法定节假日**（国务院安排，随 /api/overview 的 holidays 下发）。
+  // 只看法定节假日、**不看普通周末** —— 后者太常见（约四成批次落在周末），
+  // 全标出来反而把真正需要留意的批次淹没。
+  // 返回假期名（如「国庆节」）供悬浮说明；不是假期返回 ''。
+  function holidayName(expMs) {
+    if (!getUseHolidays()) return '';     // 用户关掉了节假日顺延 → 这个概念对他不适用
+    const cal = (DATA && DATA.holidays) || {};
+    const d = new Date(expMs);
+    const y = cal[String(d.getFullYear())];
+    if (!y || !y.holidays) return '';
+    const md = ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+    return y.holidays[md] || '';
   }
 
   // 用后端的 exp_ts（毫秒时间戳）判断，而不是解析 cycle_end 字符串 ——
@@ -1186,9 +1519,36 @@
     if (!p || !p.exp_ts || (p.remain || 0) <= 0) return null;   // 没余额的批次标了没意义
     const days = (p.exp_ts - Date.now()) / 86400000;
     if (days < 0) return null;                                   // 已过期归「已过期」页签管
-    if (days <= DUE_URGENT_DAYS) return { cls: 'due-urgent', tag: 'urgent', text: dueText(days) };
-    if (days <= DUE_SOON_DAYS) return { cls: 'due-soon', tag: 'soon', text: dueText(days) };
+    const note = holidayName(p.exp_ts);
+    if (days <= DUE_URGENT_DAYS) return { cls: 'due-urgent', tag: 'urgent', text: dueText(days), note: note };
+    if (days <= DUE_SOON_DAYS) return { cls: 'due-soon', tag: 'soon', text: dueText(days), note: note };
+    // 超出「临近」窗口，但落在法定节假日 —— 日历天**低估**了紧迫感：
+    // 假期里你不会打开工作台，可处理的工作日远少于天数
+    //（10/4 到期，中间隔着国庆 7 天假 → 实际只剩 3 个工作日，与 9/30 到期一样紧）。
+    if (note && days <= DUE_HOLIDAY_MAX_DAYS) {
+      return { cls: 'due-holiday', tag: 'holiday', text: '假期内到期', note: note };
+    }
     return null;
+  }
+
+  // 状态列里的到期标识（含悬浮说明）—— 两张批次表共用，免得两处渲染写岔
+  function dueTagHtml(due) {
+    if (!due) return '';
+    const tip = due.note
+      ? ' title="到期日落在' + due.note + '假期内 —— 假期期间你通常不会打开工作台，' +
+        '实际可处理的工作日比日历天更少"'
+      : '';
+    return '<span class="due-tag ' + due.tag + '"' + tip + '>' + due.text + '</span>';
+  }
+
+  // 落在法定节假日、且**超出「临近」窗口**的批次 —— 概览卡与批次表汇总共用同一份判定，
+  // 免得两处各写一遍条件、早晚对不上。
+  function holidayDueList(list) {
+    const src = list || (DATA && DATA.expiry_list) || [];
+    return src.filter(function (p) {
+      const d = dueInfo(p);
+      return d && d.cls === 'due-holiday';
+    });
   }
 
   function renderLifecycle(D) {
@@ -1234,7 +1594,7 @@
         return '<tr' + (due ? ' class="' + due.cls + '"' : '') + '>' +
                '<td class="num">' + (p.cycle_end || '-') + '</td>' +
                '<td><span class="tag ' + tag + '">' + (p.status_label || '-') + '</span>' +
-               (due ? '<span class="due-tag ' + due.tag + '">' + due.text + '</span>' : '') + '</td>' +
+               dueTagHtml(due) + '</td>' +
                '<td class="num">' + (p.remain || 0).toFixed(2) + '</td>' +
                '<td class="num">' + (p.used || 0).toFixed(2) + '/' + (p.size || 0).toFixed(2) + '</td>' +
                '<td>' + (p.name || '-') + '</td>' +
@@ -1253,6 +1613,32 @@
   }
 
   const statusCls = { '可用': 'ok', '已过期': 'bad', '已用完': 'used' };
+
+  // 把「假期内到期」的逐条标记汇总成一句话。
+  // 为什么要汇总：表里只是逐行的紫色标记，而"有几批、共多少积分、集中在哪个假期"
+  // 得自己数行 —— 汇总直接回答"我该做什么"，也让工作日历这件事在页面上看得见。
+  function renderBatchHolidayNote(status) {
+    const el = document.getElementById('batch-hint');
+    if (!el) return;
+    // 「已过期 / 已用完」页签下不显示（那是回顾，不是待办）
+    const hits = (status && status !== '可用') ? [] : holidayDueList();
+    if (!hits.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+    const total = hits.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
+    const days = hits.map(function (p) { return (p.cycle_end || '').slice(5, 10); }).sort();
+    const names = {};
+    hits.forEach(function (p) {
+      const n = holidayName(p.exp_ts);
+      if (n) names[n] = 1;
+    });
+    el.innerHTML =
+      '<span class="gn-ico">!</span>' +
+      '<span class="gn-txt">另有 <b>' + hits.length + '</b> 批（共 <b>' + total.toFixed(2) +
+        '</b> 积分）落在' + Object.keys(names).join('、') + '假期内到期（' +
+        (days[0] || '—') + ' ~ ' + (days[days.length - 1] || '—') + '）—— ' +
+        '假期期间你通常不会打开工作台，实际可处理的工作日比日历天更少，建议提前处理。</span>';
+    el.style.display = 'flex';
+  }
+
   function renderBatch() {
     if (!DATA) return;
     const q = (document.getElementById('batch-search').value || '').toLowerCase();
@@ -1262,6 +1648,7 @@
       const okS = !st || p.status === st;
       return okQ && okS;
     });
+    renderBatchHolidayNote(st);
     setupPager('expiry-pager', list.length, 15, function (page) {
       const start = (page - 1) * 15;
       document.getElementById('expiry-tbody').innerHTML = list.slice(start, start + 15).map(function (p) {
@@ -1280,7 +1667,7 @@
         return '<tr' + tip + (due ? ' class="' + due.cls + '"' : '') + '>' +
                '<td class="num">' + (p.cycle_end || '-') + '</td>' +
                '<td><span class="tag ' + tag + '">' + p.status + '</span>' +
-               (due ? '<span class="due-tag ' + due.tag + '">' + due.text + '</span>' : '') + '</td>' +
+               dueTagHtml(due) + '</td>' +
                '<td class="num">' + p.remain.toFixed(2) + '</td>' +
                '<td class="num">' + p.used.toFixed(2) + '/' + p.size.toFixed(2) + '</td>' +
                '<td>' + lbl + '</td></tr>';
@@ -1985,6 +2372,9 @@
       sb.style.display = 'block';
     });
   }
+
+  // 新版本检查：**延后**发起，不与首屏抢网络与渲染；失败静默（绝不因此打扰用户）
+  setTimeout(function () { checkUpdate(0); }, 1500);
 })();
 </script>
 </body>

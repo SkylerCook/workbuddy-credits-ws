@@ -42,10 +42,26 @@ jobs:
           # 发行说明优先取 README 的「更新日志」对应段落（人工维护、单一数据源）；
           # 取不到才回退到 GitHub 自动生成 —— 本项目无 PR，自动 notes 往往只剩
           # 一行 "Full Changelog"，Release 页面等于没有说明。
+          #
+          # **范围**：一个 tag 可能涵盖多个版本段（本项目是"改完攒着、验收后一起发"的节奏），
+          # 所以用**上一个已发布 tag** 当下界，把所有未发布的版本段一次带出来。
+          # 这样不必在 README 里手工维护"本版包含 X~Y"那句话（写了必过期）。
+          prev="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
+          echo "上一个已发布 tag：${prev:-（无，按首次发版处理）}"
+          notes_ok=0
+          if [ -n "$prev" ]; then
+            if python scripts/extract_changelog.py "$GITHUB_REF_NAME" --since "$prev" \
+                 > /tmp/release-notes.md; then notes_ok=1; fi
+          else
+            if python scripts/extract_changelog.py "$GITHUB_REF_NAME" \
+                 > /tmp/release-notes.md; then notes_ok=1; fi
+          fi
+
           NOTES_ARGS=(--generate-notes)
-          if python scripts/extract_changelog.py "$GITHUB_REF_NAME" > /tmp/release-notes.md; then
+          if [ "$notes_ok" = "1" ]; then
             bytes="$(wc -c < /tmp/release-notes.md)"
-            echo "发行说明：取自 README 更新日志（${bytes} 字节）"
+            nver="$(grep -c '^### ' /tmp/release-notes.md || true)"
+            echo "发行说明：取自 README 更新日志（${bytes} 字节 / ${nver} 个版本段）"
             NOTES_ARGS=(--notes-file /tmp/release-notes.md)
           else
             echo "::warning::README 更新日志里没有 $GITHUB_REF_NAME 的段落，回退到自动生成"
