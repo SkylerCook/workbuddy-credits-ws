@@ -322,7 +322,7 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
 > ⚠️ **不要写 commit hash** —— 它每次提交都变，写进来必然过时（写"未提交"同理）。
 > 只记「哪些版本已发布」和「哪些功能已提交、待发版」。
 
-- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9
+- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10
 - **已发布（2026-09-26 一次攒批发，tag v1.7.3 涵盖）**：v1.4.4 ~ v1.7.3
   - v1.4.4 —— 签到卡区分「真实连续」与「活动周期内」＋ 可用天数改 30 天窗口
   - v1.4.5 —— 凭据加密后优雅降级
@@ -361,6 +361,12 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
   任务栏隐藏生效。**注意**：验收任务栏时别把「双击启动器自动弹出的日常 Edge（看工作台）」
   误当桥窗口 —— 桥窗口标题是「WorkBuddy - 个人中心 - 用户配置 1」，日常 Edge 标题是
   「WorkBuddy 积分工作台 + N 个页面」。区分 pid：桥进程命令行含 `browser_profile`。
+- **已发布（v1.7.10，2026-09-26）**：① 静默窗口改 **SW_HIDE 彻底隐藏**（TOOLWINDOW+SHOWNA
+  对 Edge 不可靠，显示回来图标回归）② 取数浏览器可配置（auto/chrome/msedge，存
+  `config.json`；auto 登录后 `confirm_pref_channel` 固化为实际浏览器）③ 修「升级完仍提示
+  有新版本」（`_rebase_update_cache` 用当前 VERSION 重算 state）④ 关闭工作台自动退出后台
+  （心跳 `/api/heartbeat` + pagehide `sendBeacon('/api/bye')` + `_idle_watchdog` 两路）。
+  **踩坑**：sendBeacon 强制 POST，serve.py 只有 do_GET → 补 `do_POST` 接 `/api/bye`。
 - **发版提示（v1.7.2 起已简化）**：正文范围由 CI 用 `git describe --tags --abbrev=0 HEAD^`
   自动定界，**README 里不再需要写「本版包含 X~Y」**。
   仍需注意的唯一一件事：**先写好 README 段再打 tag**（否则只能回退到自动 notes）
