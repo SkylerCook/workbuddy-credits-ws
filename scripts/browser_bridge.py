@@ -118,6 +118,17 @@ def default_profile_dir():
 # chrome 沿用无后缀的基础目录（兼容历史 Chrome 用户的已有 profile）。
 CHANNEL_PROFILE_SUFFIX = {"msedge": "-msedge", "chrome": ""}
 
+# ---- 「已登录」判据 ----
+# **绝不能只看 cookie 名字叫 session**：登录页一渲染，服务端就会下发一个
+# **未登录的匿名 `session`**（实测 339 字节、到期 +7 天）。只看名字会把它当成
+# 登录成功 → `_relogin_flow` 轮询第一次就命中并 `ctxv.close()` 提前关窗，
+# 用户根本来不及输入账号（实测：报「登录成功」但真实接口仍 401）。
+# 认证完成的权威标志是 Keycloak 的 `KEYCLOAK_SESSION`；流程进行中只会下发
+# `KC_RESTART` / `AUTH_SESSION_ID` / `KC_STATE_CHECKER`。
+# 另留一条长度兜底：真实 `session` 实测 4064 字节，匿名仅 339 字节。
+AUTH_COOKIE = "KEYCLOAK_SESSION"
+AUTH_SESSION_MIN_LEN = 1000
+
 
 def profile_dir_for(channel, base=None):
     """某浏览器专用 profile 目录。"""
@@ -421,6 +432,10 @@ class BrowserBridge:
                 "未找到可用的浏览器（已尝试 %s）：%s。"
                 "请安装 Microsoft Edge 或 Google Chrome。"
                 % (" / ".join(channel_candidates()), last_err or "未知错误"))
+        # 若偏好还是「auto」，launch 确定浏览器后就固化 —— 不必等 relogin。
+        # 否则「用老 cookie 续命、从不走重新登录」的用户会永远停在 auto
+        # （实测 v1.7.10：固化只挂在 relogin 成功处，本机老会话一直没触发）。
+        confirm_pref_channel(self._channel)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
             page.goto(self.base_url + LANDING_PATH,
@@ -641,12 +656,19 @@ class BrowserBridge:
 
     @staticmethod
     def _collect_session(ctx):
-        """从浏览器取会话 cookie 的到期元信息（只读，不取值）。"""
-        out = {"cookies": [], "expires_at": None, "days_left": None, "expired": False}
+        """从浏览器取会话 cookie 的到期元信息（只读元信息，不取值）。"""
+        out = {"cookies": [], "expires_at": None, "days_left": None,
+               "expired": False, "authenticated": False}
         try:
             for c in ctx.cookies():
+                if "workbuddy" not in (c.get("domain") or ""):
+                    continue
                 nm = c.get("name")
-                if nm in ("session", "session_2") and "workbuddy" in c.get("domain", ""):
+                if nm == AUTH_COOKIE:
+                    out["authenticated"] = True
+                if nm in ("session", "session_2"):
+                    if len(c.get("value") or "") >= AUTH_SESSION_MIN_LEN:
+                        out["authenticated"] = True
                     out["cookies"].append({"name": nm, "expires": c.get("expires")})
         except Exception:
             return out
@@ -656,6 +678,11 @@ class BrowserBridge:
             out["expires_at"] = int(newest * 1000)   # 与旧 auth.expiresAt 同为毫秒
             out["days_left"] = round((newest - time.time()) / 86400.0, 1)
             out["expired"] = newest < time.time()
+        if not out["authenticated"]:
+            # 只拿到匿名 session：不得据此判定会话有效（否则 relogin 会假成功并提前关窗）。
+            out["expires_at"] = None
+            out["days_left"] = None
+            out["expired"] = True
         return out
 
     def _relogin_flow(self, p, payload):

@@ -240,6 +240,22 @@ BRIDGE_PREFIX = "/billing/meter"   # 桥模式下所有接口都挂在这个前�
 # 会话失效标记：桥返回 401/403 时置位，供 UI 提示「点此重新登录」
 SESSION_STATE = {"expired": False, "at": None, "reason": ""}
 
+# 过期标志的粘性时长（秒）。粘性标志的初衷是会话已过期时避免反复撞墙（每次真实
+# 调用都要等网关 401 才回来，浪费几秒且无意义）。但让它**永久**粘住，会话在浏览器侧
+# 恢复（换浏览器/被续期）后页面也不会自愈。故加 TTL：到期后放行一次真实重试，
+# 成功则清标志、失败则重新计时 —— 失败态不应比失败本身更持久。
+SESSION_EXPIRED_TTL = 60
+
+
+def _session_short_circuit():
+    """是否该因「会话过期」短路当前请求（粘性标志 + TTL）。"""
+    if not SESSION_STATE["expired"]:
+        return False
+    at = SESSION_STATE.get("at")
+    if at and time.time() - at > SESSION_EXPIRED_TTL:
+        return False   # 到期：放行，给一次真实重试的机会（成功会在 _bridge_call 里清标志）
+    return True
+
 _BRIDGE = None
 _BRIDGE_LOCK = threading.Lock()
 
@@ -392,7 +408,7 @@ def auth_diagnosis():
     而是「登录态存在但读不出明文」—— 两者给用户的提示与后续动作完全不同。
     """
     if bridge_enabled():
-        if SESSION_STATE["expired"]:
+        if _session_short_circuit():
             return "session_expired", (SESSION_STATE.get("reason")
                                        or "浏览器会话已过期，请重新登录")
         return "ok", ""
@@ -487,6 +503,9 @@ def _bridge_call(path, body=None):
         return None, "浏览器桥不可用: %s" % e
     res = bridge.call(BRIDGE_PREFIX + path, body)
     if res["ok"]:
+        if SESSION_STATE["expired"]:
+            # 会话在浏览器侧已恢复（自愈）：清除粘性标志，让后续请求不再短路
+            SESSION_STATE.update(expired=False, at=None, reason="")
         return res["data"], None
     if res["kind"] == "session_expired":
         SESSION_STATE.update(expired=True, at=time.time(), reason=res.get("error") or "")
@@ -556,6 +575,8 @@ def api_account_info():
     if bridge_enabled():
         res = get_bridge().call(ACCOUNT_PATH, method="GET")
         if res["ok"]:
+            if SESSION_STATE["expired"]:
+                SESSION_STATE.update(expired=False, at=None, reason="")
             return ((res["data"] or {}).get("data") or {}), None
         if res["kind"] == "session_expired":
             SESSION_STATE.update(expired=True, at=time.time(),

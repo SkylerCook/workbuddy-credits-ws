@@ -1906,9 +1906,15 @@
   function showSessionExpired(msg) {
     const el = document.getElementById('session-banner');
     if (!el) return;
+    const bc = (DATA && DATA.browser_channel) || 'auto';
+    // 显式指定了取数浏览器时，会话过期很可能是「刚切换浏览器、新浏览器尚未登录」，
+    // 而非 7 天自然失效 —— 给一句针对性的引导，避免用户误以为「坏了」。
+    const bcNote = bc !== 'auto'
+      ? '（你指定了取数浏览器，若刚切换过，该浏览器需重新登录一次）'
+      : '';
     el.style.display = 'flex';
     el.innerHTML =
-      '<span><b>浏览器会话已过期</b>（WorkBuddy 官网登录态约 7 天失效）。' +
+      '<span><b>浏览器会话已过期</b>' + bcNote + '（WorkBuddy 官网登录态约 7 天失效）。' +
       (msg ? ' ' + msg : '') + '登录后数据会自动恢复。</span>' +
       '<button class="sb-btn" id="sb-relogin">重新登录</button>' +
       '<span class="sb-status" id="sb-status">登录时窗口会弹出来，无需重启工作台</span>';
@@ -1920,7 +1926,10 @@
     const btn = document.getElementById('sb-relogin');
     const st = document.getElementById('sb-status');
     if (btn) { btn.disabled = true; btn.textContent = '请在浏览器窗口登录…'; }
-    if (st) st.textContent = '已弹出浏览器窗口，请在其中登录（最多等 5 分钟）';
+    // 登录页会加载若干第三方资源（如埋点），load 可能拖很久 —— DOM 其实早已就绪，
+    // 用户看到白屏/转圈属正常，先安抚一句，别让用户误判「卡死」而关窗。
+    if (st) st.textContent = '已弹出浏览器窗口，请在其中登录（最多等 5 分钟）。' +
+      '若页面白屏或转圈请稍候——登录页部分第三方资源加载较慢，属正常现象';
     // 这个请求会一直挂到用户登录完成才返回，所以超时放宽到 6 分钟
     fetchWithTimeout('/api/relogin', 360000)
       .then(function (r) { return r.json(); })
