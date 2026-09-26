@@ -497,7 +497,49 @@ def start_service():
 
 # ---------------------------------------------------------------- 主流程
 
+class _Tee:
+    """把写入同时转发到日志文件与原流。
+
+    「立即升级」以 DETACHED 子进程跑本脚本，stdout 无人可见 —— 全程输出
+    落一份到用户数据目录 update_last.log（每次运行覆盖），供工作台轮询
+    展示升级进度（下载/校验/覆盖/重启卡在哪一步）与事后排查。
+    """
+    def __init__(self, log_fh, *streams):
+        self._fh = log_fh
+        self._streams = streams
+
+    def write(self, s):
+        try:
+            self._fh.write(s)
+            self._fh.flush()
+        except Exception:
+            pass
+        for st in self._streams:
+            try:
+                st.write(s)
+            except Exception:
+                pass
+        return len(s)
+
+    def flush(self):
+        for st in list(self._streams) + [self._fh]:
+            try:
+                st.flush()
+            except Exception:
+                pass
+
+
 def main():
+    # 升级日志：详见 _Tee 说明。打开失败不阻塞升级本身。
+    log_path = os.path.join(os.path.expanduser("~"), ".workbuddy",
+                            "workbuddy-credits-data", "update_last.log")
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        fh = open(log_path, "w", encoding="utf-8", buffering=1)   # 行缓冲，轮询即时可见
+        sys.stdout = _Tee(fh, sys.stdout)
+        sys.stderr = _Tee(fh, sys.stderr)
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description="更新已安装的 workbuddy-credits skill")
     ap.add_argument("--check", action="store_true", help="只检查是否有更新，不做改动")
     ap.add_argument("--force", action="store_true", help="版本号相同也重新安装")

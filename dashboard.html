@@ -958,9 +958,11 @@
             // 轮询版本：update.py 会结束并重启本服务 —— 中途连接拒绝属正常过程
             const before = d.local;
             const t0 = Date.now();
+            const esc = function (s) { return String(s).replace(/</g, '&lt;'); };
             (function poll() {
               if (Date.now() - t0 > 180000) {
-                if (txt) txt.innerHTML = '升级耗时较长，请稍后手动刷新页面确认版本。';
+                if (txt) txt.innerHTML = '升级耗时较长，请刷新页面确认版本；'
+                  + '或手动运行 <code>python update.py</code> 查看实时进度。';
                 return;
               }
               fetch('/api/version', { cache: 'no-store' })
@@ -971,6 +973,18 @@
                     setTimeout(function () { location.reload(); }, 1200);
                     return;
                   }
+                  // 同时拉升级日志，把「当前进行到哪一步」显示出来（v1.7.9）
+                  fetch('/api/update-log', { cache: 'no-store' })
+                    .then(function (r) { return r.ok ? r.json() : null; })
+                    .then(function (lg) {
+                      if (lg && lg.log && txt) {
+                        const lines = lg.log.trim().split('\n').filter(Boolean);
+                        const last = lines[lines.length - 1];
+                        if (last) txt.innerHTML = '正在升级到 <b>v' + d.remote
+                          + '</b>：' + esc(last);
+                      }
+                    })
+                    .catch(function () {});
                   setTimeout(poll, 2000);
                 })
                 .catch(function () { setTimeout(poll, 2000); });

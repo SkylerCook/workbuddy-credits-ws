@@ -63,9 +63,13 @@ cookie 由浏览器自动携带。**本技能不接触、不解析、不落盘�
 2. **Playwright sync API 有线程亲和性** → 桥跑在专用线程里，其他线程经队列提交（actor 模式）
 3. **网关层 HTML 401 = 会话过期**（openresty 返回），≠ 业务错误（业务错误是 JSON `code:xxxx`）
 4. **持久化 profile 会「记住」窗口坐标**（v1.7.6 踩坑）：静默窗口用 `--window-position=-32000,-32000`
-   移出屏幕，坐标会在 `ctx.close()` 时写进 profile；登录/可见窗口若**不给** `--window-position`
-   就会恢复这个屏幕外坐标 → 登录弹窗「消失」在屏幕外。故 `LAUNCH_ARGS_VISIBLE` 必须显式
-   `--window-position=80,80`（命令行参数优先级高于 profile 记住的位置，实测生效）。
+  移出屏幕，坐标会在 `ctx.close()` 时写进 profile；登录/可见窗口若**不给** `--window-position`
+  就会恢复这个屏幕外坐标 → 登录弹窗「消失」在屏幕外。故 `LAUNCH_ARGS_VISIBLE` 必须显式
+  `--window-position=80,80`（命令行参数优先级高于 profile 记住的位置，实测生效）。
+5. **任务栏不监听窗口样式变化**（v1.7.9 踩坑）：给静默窗口加 `WS_EX_TOOLWINDOW` 想让它
+   不进任务栏，但**仅改样式 + SetWindowPos(FRAMECHANGED) 不够** —— 任务栏按钮在窗口
+   创建时就建好了，必须走一轮 `SW_HIDE → SW_SHOWNA`（重显示不抢焦点）让 shell 重新
+   评估才移除。验收判据要看**任务栏图标是否真消失**，不能只看 EXSTYLE 位（样式设了≠图标没了）。
 
 **浏览器来源**：用 `channel` 别名驱动**系统浏览器**（不是 Playwright 自带内核，故**无需**
 `playwright install` 下载内核）。候选顺序：**上次登录成功的浏览器最优先**（记在数据目录

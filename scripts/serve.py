@@ -314,6 +314,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 subprocess.Popen([sys.executable, upd_py], cwd=HERE, **kw)
                 self._send_json({"ok": True,
                                  "message": "升级已开始：服务将自动重启，页面随后自动刷新"})
+        elif path == "/api/update-log":
+            # 「立即升级」的进度日志：update.py 子进程把全程输出写到该文件（每次运行
+            # 覆盖、行缓冲）。服务重启中的空窗期本接口不可达，前端轮询已有兜底。
+            p = os.path.join(wc.DATA_DIR, "update_last.log")
+            try:
+                with open(p, "r", encoding="utf-8", errors="replace") as f:
+                    self._send_json({"ok": True, "log": f.read()[-2000:]})
+            except Exception:
+                self._send_json({"ok": True, "log": ""})
         elif path in ("/api/overview", "/api/requests", "/api/lifecycle"):
             panel = path.rsplit("/", 1)[-1]
             self._send_json(build_panel_json(panel, fresh=self._fresh_flag(qs)))

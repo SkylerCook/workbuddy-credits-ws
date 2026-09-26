@@ -27,6 +27,7 @@ WorkBuddy 客户端已把登录凭据**加密落盘**（`$wbEncrypted` + AES-GCM
 """
 import os
 import queue
+import sys
 import threading
 import time
 from concurrent.futures import Future
@@ -372,7 +373,100 @@ class BrowserBridge:
                       wait_until="domcontentloaded", timeout=60000)
         except Exception as e:
             self.log("落地页导航异常（可继续）: %s" % e)
+        if not visible:
+            # 静默窗口移出任务栏/Alt-Tab（用户反馈：屏幕外窗口仍占任务栏图标，
+            # 容易被当成无关 Edge 误关 —— 误关即取数中断）。窗口本体照常运行。
+            self._hide_from_taskbar()
         return ctx, page
+
+    # ---- 静默窗口任务栏隐藏（Windows）----
+    # 原理：给桥的浏览器主窗口加 WS_EX_TOOLWINDOW 扩展样式 —— 工具窗口不进任务栏
+    # 也不进 Alt-Tab，但窗口本体（屏幕外 -32000）照常渲染，cookie / CDP / 取数
+    # 完全不受影响。顺带解决「用户误关任务栏里的静默 Edge 导致取数中断」。
+
+    def _active_profile_dir(self):
+        """当前 launch 实际使用的 profile 目录（chrome/edge 各用各的）。"""
+        if self._custom_profile:
+            return self.profile_dir
+        return profile_dir_for(getattr(self, "_channel", None) or "msedge")
+
+    def _find_browser_pid(self):
+        """找桥的浏览器主进程 PID：命令行含本 profile 的 user-data-dir 且非子进程。
+
+        桥用独立 profile，进程与用户日常浏览器互不相干（后者是另一个主进程），
+        按路径精确匹配不会误伤。失败返回 0（调用方静默降级，图标仍在任务栏）。
+        """
+        if sys.platform != "win32":
+            return 0
+        try:
+            import subprocess
+            prof = self._active_profile_dir()
+            ps = ("$p='%s'; Get-CimInstance Win32_Process | "
+                  "Where-Object { $_.CommandLine -and $_.CommandLine.Contains($p) "
+                  "-and $_.CommandLine -notmatch '--type=' } | "
+                  "Select-Object -First 1 -ExpandProperty ProcessId" % prof)
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                capture_output=True, text=True, timeout=25,
+                creationflags=0x08000000)   # CREATE_NO_WINDOW
+            return int((r.stdout or "0").strip() or 0)
+        except Exception:
+            return 0
+
+    def _hide_from_taskbar(self, attempts=4, wait=0.8):
+        """静默模式专用：把桥的浏览器窗口从任务栏/Alt-Tab 移除。
+
+        窗口创建可能有片刻滞后，故带重试。任何一步失败都静默降级
+        （图标仍显示在任务栏，仅影响观感，绝不影响取数）。
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            pid = 0
+            for _ in range(attempts):
+                pid = self._find_browser_pid()
+                if pid:
+                    break
+                time.sleep(wait)
+            if not pid:
+                self.log("未定位到浏览器窗口进程，跳过任务栏隐藏")
+                return
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+            WS_EX_APPWINDOW = 0x00040000
+            SWP_FLAGS = 0x0001 | 0x0002 | 0x0004 | 0x0020   # NOSIZE|NOMOVE|NOZORDER|FRAMECHANGED
+            get_wl = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
+            set_wl = getattr(user32, "SetWindowLongPtrW", None) or user32.SetWindowLongW
+            hits = []
+            proto = ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HWND, wintypes.LPARAM)
+
+            def _cb(hwnd, _lp):
+                wpid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+                if wpid.value == pid:
+                    hits.append(hwnd)
+                return 1
+
+            user32.EnumWindows(proto(_cb), 0)
+            for hwnd in hits:
+                style = get_wl(hwnd, GWL_EXSTYLE)
+                set_wl(hwnd, GWL_EXSTYLE, (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
+                if user32.IsWindowVisible(hwnd):
+                    # ⚠️ 任务栏不监听窗口样式变化 —— 按钮在窗口创建时就建好了，
+                    # 改样式必须走一轮「隐藏 → 重显示」才会被 shell 重新评估并移除
+                    # （实测只发 FRAMECHANGED 不够）。SW_SHOWNA 显示但不抢焦点；
+                    # 窗口本就在屏幕外，用户全程无感知。
+                    user32.ShowWindow(hwnd, 0)    # SW_HIDE
+                    user32.ShowWindow(hwnd, 8)    # SW_SHOWNA
+                else:
+                    user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, SWP_FLAGS)
+            if hits:
+                self.log("静默浏览器窗口已移出任务栏（%d 个窗口）" % len(hits))
+        except Exception as e:
+            self.log("隐藏任务栏图标失败（不影响取数）: %s" % e)
 
     def _run(self):
         """worker 主循环。**所有 Playwright 调用都发生在本线程。**"""

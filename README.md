@@ -428,6 +428,35 @@ WorkBuddy 客户端自 2026-09-26 起把凭据**加密落盘**，本技能原先
 
 ## 九、更新日志
 
+### v1.7.9 — 「立即升级」进度可见；静默浏览器窗口移出任务栏
+
+**功能 · 静默窗口移出任务栏**：静默取数的浏览器窗口虽移到屏幕外（-32000），但仍在
+任务栏/Alt-Tab 占一个 Edge 图标，容易被当成无关窗口**误点关闭**（误关即取数中断）。
+现于静默 launch 后自动定位桥的浏览器主进程（按 `--user-data-dir=<本 profile>` 精确
+匹配，不会误伤用户日常浏览器），给其顶层窗口加 `WS_EX_TOOLWINDOW` 扩展样式 ——
+窗口从任务栏与 Alt-Tab 消失，但窗口本体照常渲染，cookie / CDP / 取数完全不受影响。
+顺带根治「用户误关静默窗口导致取数中断」。登录弹窗（可见模式）不受影响。
+
+**修复 · 升级进度黑盒**：`/api/update-run` 以 DETACHED 子进程跑 `update.py`，
+其全程输出 `print` 到无人查看的 stdout —— **不落任何日志**；前端只能盲轮询
+`/api/version` 等 3 分钟，卡在哪一步（检查 / 下载 / 校验 / 覆盖 / 重启）完全不可知
+（实测另一台电脑升级「卡住→疑似崩溃」，最后靠手动重启服务收尾）。
+
+**改动**：
+
+- `update.py`：加 `_Tee`，stdout/stderr 同时落到
+  `%USERPROFILE%\.workbuddy\workbuddy-credits-data\update_last.log`
+  （每次运行覆盖、行缓冲），命令行跑和「立即升级」跑都能留痕。
+- `serve.py`：新增 `GET /api/update-log` 读该日志（尾部 2000 字符）。
+- `dashboard.html`：升级轮询时同时拉日志，把**最新一行**显示在提示条上
+  （如「下载中…」「✓ sha256 校验通过」「重启服务…」），超时提示也给出手动排查指引。
+- `browser_bridge.py`：`_hide_from_taskbar()`（WS_EX_TOOLWINDOW）+ `_find_browser_pid()`。
+
+**排查存量问题**：对升级卡住的场景，直接命令行跑
+`python "%USERPROFILE%\.workbuddy\skills\workbuddy-credits\scripts\update.py"`
+看输出卡在哪一步（检查失败=api.github.com 不通，可加 `--proxy`；「已是最新版本」
+=无需升级，刷新页面即可；覆盖后重启失败=双击桌面启动器手动拉起）。
+
 ### v1.7.8 — 套餐档位显示（Free/Pro/Plus/Max）；修面板字段白名单遗漏
 
 **功能**：套餐档位 = 订阅型包（`CapacityType=4`）的 `PackageName`（如「CodeBuddy个人体验版」），
