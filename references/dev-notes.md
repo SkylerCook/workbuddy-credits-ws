@@ -322,7 +322,7 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
 > ⚠️ **不要写 commit hash** —— 它每次提交都变，写进来必然过时（写"未提交"同理）。
 > 只记「哪些版本已发布」和「哪些功能已提交、待发版」。
 
-- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10
+- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10 / v1.7.11
 - **已发布（2026-09-26 一次攒批发，tag v1.7.3 涵盖）**：v1.4.4 ~ v1.7.3
   - v1.4.4 —— 签到卡区分「真实连续」与「活动周期内」＋ 可用天数改 30 天窗口
   - v1.4.5 —— 凭据加密后优雅降级
@@ -367,6 +367,12 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
   有新版本」（`_rebase_update_cache` 用当前 VERSION 重算 state）④ 关闭工作台自动退出后台
   （心跳 `/api/heartbeat` + pagehide `sendBeacon('/api/bye')` + `_idle_watchdog` 两路）。
   **踩坑**：sendBeacon 强制 POST，serve.py 只有 do_GET → 补 `do_POST` 接 `/api/bye`。
+- **已发布（v1.7.11，2026-09-26）**：① 修「重新登录假成功」（`_collect_session` 判定收紧为
+  `KEYCLOAK_SESSION` 存在 或 `session`/`session_2` 值长度 ≥1000；匿名 session 339B 不再误判——
+  否则切到未登录 profile / 全新安装 / 7 天过期后，relogin 第一次就命中并提前关窗，死锁）② 会话
+  过期粘性标志加 60s TTL（`_session_short_circuit`），到期放行真实重试、成功即清标志 → 会话恢复后
+  页面自愈，失败态不再比失败本身持久 ③ 浏览器偏好 launch 即固化（老会话用户不再永远停在 auto）
+  ④ 登录体验文案（白屏提示 + 切换浏览器未登录引导）。**来源**：另一台电脑报的 issue（假阳性）+ 评论（粘性）。
 - **发版提示（v1.7.2 起已简化）**：正文范围由 CI 用 `git describe --tags --abbrev=0 HEAD^`
   自动定界，**README 里不再需要写「本版包含 X~Y」**。
   仍需注意的唯一一件事：**先写好 README 段再打 tag**（否则只能回退到自动 notes）
