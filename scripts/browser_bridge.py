@@ -400,11 +400,16 @@ class BrowserBridge:
             self._ready.set()
 
     def _worker_loop(self, p, ctx, page):
+        state = {"ctx": ctx, "page": page}   # 重建浏览器后原地替换
         while True:
             item = self._q.get()
             if item is None:
                 return
             if item[0] == "stop":
+                try:
+                    state["ctx"].close()
+                except Exception:
+                    pass
                 return
 
             # ---- 攒批 ----
@@ -449,25 +454,46 @@ class BrowserBridge:
                 if fut is not None:
                     fut.set_running_or_notify_cancel()
 
-            if len(calls) == 1:
-                path, body, method = calls[0][1]
-                try:
-                    calls[0][2].set_result(page.evaluate(JS_CALL, [path, body, method]))
-                except Exception as e:
-                    calls[0][2].set_exception(e)
-                continue
-
-            args = [[pl[0], pl[1], pl[2]] for (_a, pl, _f) in calls]
             try:
-                results = page.evaluate(JS_CALL_MANY, args)
+                self._eval_calls(state["page"], calls)
             except Exception as e:
-                for (_a, _pl, fut) in calls:
-                    if not fut.done():
-                        fut.set_exception(e)
-                continue
-            for (_a, _pl, fut), res in zip(calls, results):
-                if not fut.done():
-                    fut.set_result(res)
+                if not self._looks_closed(e):
+                    for (_a, _pl, fut) in calls:
+                        if not fut.done():
+                            fut.set_exception(e)
+                    continue
+                # 浏览器实例被意外关闭（用户手动关窗 / 崩溃 / 被系统回收）：
+                # 自动重建静默窗口并重试一次，避免「关一次浏览器之后永远报错」。
+                self.log("浏览器实例已失效，自动重建静默窗口: %s" % str(e).strip()[:100])
+                try:
+                    try:
+                        state["ctx"].close()
+                    except Exception:
+                        pass
+                    state["ctx"], state["page"] = self._launch(p, visible=False)
+                    self._eval_calls(state["page"], calls)
+                except Exception as e2:
+                    for (_a, _pl, fut) in calls:
+                        if not fut.done():
+                            fut.set_exception(e2)
+
+    @staticmethod
+    def _looks_closed(e):
+        """判断异常是否为「浏览器/页面已关闭」类（触发自动重建）。"""
+        s = str(e).lower()
+        return ("closed" in s or "target page" in s or "browser has been" in s)
+
+    def _eval_calls(self, page, calls):
+        """执行一批 call 并把结果塞回各自的 Future。"""
+        if len(calls) == 1:
+            path, body, method = calls[0][1]
+            calls[0][2].set_result(page.evaluate(JS_CALL, [path, body, method]))
+            return
+        args = [[pl[0], pl[1], pl[2]] for (_a, pl, _f) in calls]
+        results = page.evaluate(JS_CALL_MANY, args)
+        for (_a, _pl, fut), res in zip(calls, results):
+            if not fut.done():
+                fut.set_result(res)
 
     @staticmethod
     def _collect_session(ctx):

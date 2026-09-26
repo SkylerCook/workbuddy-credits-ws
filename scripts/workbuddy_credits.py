@@ -92,6 +92,30 @@ TYPE_TRIAL = 4
 TYPE_GIFT = 1
 TYPE_LABEL = {TYPE_TRIAL: "套餐用量", TYPE_GIFT: "权益赠送包"}
 
+# 套餐档位：订阅型包（CapacityType=4）PackageName 的中文关键词 → 英文档位。
+# 中文四档：体验版(免费)/标准版/高级版/旗舰版 ↔ Free/Plus/Pro/Max。
+# 按通用英文直觉 Pro > Plus：标准版→Plus、高级版/进阶版→Pro。
+# 顺序即优先级（最具体的 Max/旗舰排最前；"pro+"/"promonplus" 须先于 "pro" 判定，
+# 否则 Pro+ 包月会误命中标准版 Plus 的 "pro"）。
+PLAN_TIER_KEYWORDS = [
+    ("Max",  ("旗舰", "flagship", "max")),
+    ("Pro",  ("高级", "进阶", "advanced", "plus", "pro+", "promonplus")),
+    ("Plus", ("标准", "pro", "promon", "proyear", "青年", "youth")),
+    ("Free", ("体验", "免费", "试用", "free", "trial")),
+]
+
+
+def plan_tier(package_name):
+    """订阅型包名 → 档位（Free/Pro/Plus/Max）。识别不出返回空串。"""
+    if not package_name:
+        return ""
+    low = str(package_name).lower()
+    for tier, kws in PLAN_TIER_KEYWORDS:
+        for kw in kws:
+            if kw in low:
+                return tier
+    return ""
+
 # 快照数据目录（独立于 skill 目录，避免 skill 更新/删除影响历史数据）
 DATA_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy", "workbuddy-credits-data")
 SNAPSHOT_FILE = os.path.join(DATA_DIR, "snapshots.jsonl")
@@ -1051,8 +1075,55 @@ RECONCILE_WARMUP_DAYS = 14   # 上线前两周只记录不告警
 #     实测 2026-09-26：近 7 天日均 0.59 →「9473 天」；近 30 天日均 77.74 →「72 天」✓
 #   下限 1.0 —— 即便在 30 天窗口下，均值若仍低于此值说明样本过稀、除出来的天数会荒谬，
 #     此时不估算（页面显示 —），副标题如实给出「有消耗的天数」说明原因。
+#   窗口可经**工作台设置页**配置（v1.7.7 起），存 DATA_DIR/config.json；这里的是默认值。
 DAILY_AVG_WINDOW_DAYS = 30
+DAILY_AVG_WINDOW_MIN = 7        # 可配置下限：再短会被短期异常主导
+DAILY_AVG_WINDOW_MAX = 90       # 可配置上限
 DAYS_LEFT_MIN_AVG = 1.0
+
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+
+
+def _read_config():
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def get_avg_window():
+    """「预计可用天数」的观测窗口（天）。可经工作台设置页配置，默认 30。"""
+    v = _read_config().get("avg_window_days")
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return DAILY_AVG_WINDOW_DAYS
+    if not (DAILY_AVG_WINDOW_MIN <= v <= DAILY_AVG_WINDOW_MAX):
+        return DAILY_AVG_WINDOW_DAYS
+    return v
+
+
+def set_avg_window(days):
+    """写入观测窗口配置。返回 (ok, message)。"""
+    try:
+        v = int(days)
+    except (TypeError, ValueError):
+        return False, "窗口必须是数字"
+    if not (DAILY_AVG_WINDOW_MIN <= v <= DAILY_AVG_WINDOW_MAX):
+        return False, "窗口需在 %d~%d 天之间" % (DAILY_AVG_WINDOW_MIN, DAILY_AVG_WINDOW_MAX)
+    cfg = _read_config()
+    cfg["avg_window_days"] = v
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = CONFIG_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CONFIG_FILE)
+        return True, "已保存（观测窗口 %d 天）" % v
+    except Exception as e:
+        return False, "保存失败: %s" % e
 
 
 def reconcile(l5_rows, usage_hist, snapshots=None, tolerance=RECONCILE_TOLERANCE,
@@ -1954,6 +2025,7 @@ _PANEL_KEYS = {
     # 概览：账号 / KPI 卡 / 摘要 / 收支统计 / 图表 / 账本 / 会话 / 批次 / 签到 / 健康
     "overview": (
         "version", "generated_at", "nickname", "account_type", "auth_status",
+        "plan_tier",       # 套餐档位（Free/Pro/Plus/Max），从订阅型包 PackageName 映射
         "summary", "waste", "waste_authoritative",
         "total_remain", "avail_count", "total_used", "today_used",
         "today_used_l5", "today_used_l2", "usage_source", "days_left", "daily_avg",
@@ -2089,6 +2161,14 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
             (_num(p.get("remain_cum")) - p["remain"]) for p in diverged_pkgs), 4),
     }
 
+    # 套餐档位：取订阅型包（套餐用量）的 PackageName 映射到 Free/Pro/Plus/Max。
+    plan_tier_val = ""
+    for p in packages:
+        if p.get("cycle_based"):
+            plan_tier_val = plan_tier(p.get("name", ""))
+            if plan_tier_val:
+                break
+
     # 累计消耗与今日消耗
     total_used = round(sum(p["used"] for p in packages), 4)
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -2202,7 +2282,8 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     # 「包到账被误算成消耗」的伪增量（见 compute_usage_daily 的已知缺陷说明）。
     # 同时剔除今日（未完天）以免日均被低估。
     hist_days = [d["credit"] for d in udaily if d["date"] < today_str]
-    recent = hist_days[-DAILY_AVG_WINDOW_DAYS:]
+    window = get_avg_window()
+    recent = hist_days[-window:]
     daily_avg = round(sum(recent) / len(recent), 4) if recent else 0.0
     active_days = sum(1 for c in recent if c > 0)   # 有消耗的天数（解释日均为何偏低）
     total_remain_val = round(sum(g["remain_sum"] for g in groups), 4)
@@ -2218,7 +2299,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
                       % (waste["at_risk_count"], waste["soon_days"], waste["at_risk"]))
     if days_left is not None:
         advice.append("按近 %d 天日均消耗 %.2f 积分，剩余积分约可用 %.1f 天"
-                      % (DAILY_AVG_WINDOW_DAYS, daily_avg, days_left))
+                      % (window, daily_avg, days_left))
     advice.append("坚持每日签到（每日 +%s 积分），每月约可补 %d 积分"
                   % (daily_credit_val, int(float(daily_credit_val) * 30)))
     if waste["wasted"] > 0:
@@ -2227,7 +2308,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     # ---- 使用摘要（一段综合文字）----
     summary_parts = []
     if daily_avg > 0:
-        summary_parts.append("近 %d 天日均消耗 %.1f 积分" % (DAILY_AVG_WINDOW_DAYS, daily_avg))
+        summary_parts.append("近 %d 天日均消耗 %.1f 积分" % (window, daily_avg))
     if days_left is not None:
         summary_parts.append("按当前节奏，剩余积分约可用 %.1f 天" % days_left)
     if waste["at_risk_count"] > 0:
@@ -2251,6 +2332,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "nickname": account.get("nickname", "-"),
         "account_type": account.get("type", ""),
+        "plan_tier": plan_tier_val,         # 套餐档位（Free/Pro/Plus/Max），识别不出为空
         "groups": [
             {"label": g["label"], "avail_count": g["avail_count"],
              "remain_sum": g["remain_sum"], "total_count": g["total_count"]}
@@ -2272,7 +2354,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         "usage_hourly": uhourly,
         "daily_avg": daily_avg,
         "active_days_30d": active_days,
-        "daily_avg_window": DAILY_AVG_WINDOW_DAYS,
+        "daily_avg_window": window,
         "days_left": days_left,
         "ledger": ledger,
         "advice": advice,

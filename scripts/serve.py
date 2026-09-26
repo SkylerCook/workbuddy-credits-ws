@@ -325,6 +325,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": ok, "message": msg}, 200 if ok else 400)
         elif path == "/api/checkin":
             self._send_json(do_checkin())
+        elif path == "/api/set-config":
+            # 写用户配置（现仅有「预计可用天数」的观测窗口）。GET + query，风格与
+            # create-shortcut / checkin 一致；写成功后失效缓存，下次取数按新配置算。
+            key = (qs.get("key") or [""])[0]
+            if key == "avg_window_days":
+                ok, msg = wc.set_avg_window((qs.get("value") or [""])[0])
+                if ok:
+                    HUB.invalidate()
+                self._send_json({"ok": ok, "message": msg}, 200 if ok else 400)
+            else:
+                self._send_json({"ok": False, "error": "未知配置项: %s" % key}, 400)
         elif path == "/api/relogin":
             # 会阻塞到用户登录完成（最长 wait_seconds）。threading server 每请求一线程，
             # 不会拖住其他请求；前端把该请求的超时放宽到 6 分钟。

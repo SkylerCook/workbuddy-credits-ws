@@ -89,6 +89,28 @@
   .user-avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg,#388DF6,#7c3aed); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; }
   .user-name { font-size: 13px; color: var(--title); font-weight: 600; }
   .user-tag { font-size: 10px; background: #eef2ff; color: var(--primary); border-radius: 4px; padding: 1px 5px; }
+  /* ── 套餐档位彩色徽章（Free/Plus/Pro/Max）──────────────────────────
+     档次用色阶表达：Free 银灰（免费档，低调）→ Plus 蓝（标准版）→ Pro 紫（高级版）→ Max 金（旗舰版）。
+     徽章为渐变胶囊 + 高光内描边；Max 额外一道循环流光，突出最高档。 */
+  .tier-badge {
+    display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: .8px;
+    line-height: 1.45; color: #fff; border-radius: 999px; padding: 3px 14px;
+    text-shadow: 0 1px 2px rgba(0,0,0,.25);
+    box-shadow: 0 2px 6px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.35);
+    vertical-align: middle;
+  }
+  /* 双色渐变：浅→深更有层次；再叠一层同色系外发光，营造霓虹光晕。
+     档次：Free 银灰 < Plus 蓝（标准版）< Pro 紫（高级版）< Max 金（旗舰版）。 */
+  .tier-free { background: linear-gradient(135deg, #cbd5e1, #64748b); box-shadow: 0 2px 8px rgba(100,116,139,.45), inset 0 1px 0 rgba(255,255,255,.35); }
+  .tier-plus { background: linear-gradient(135deg, #60a5fa, #1d4ed8); box-shadow: 0 2px 8px rgba(37,99,235,.50), inset 0 1px 0 rgba(255,255,255,.35); }
+  .tier-pro  { background: linear-gradient(135deg, #c084fc, #6d28d9); box-shadow: 0 2px 8px rgba(124,58,237,.50), inset 0 1px 0 rgba(255,255,255,.35); }
+  .tier-max  { background: linear-gradient(135deg, #fcd34d, #ea580c); box-shadow: 0 2px 10px rgba(245,158,11,.55), inset 0 1px 0 rgba(255,255,255,.40); position: relative; overflow: hidden; }
+  .tier-max::after {
+    content: ''; position: absolute; top: 0; left: -70%; width: 45%; height: 100%;
+    background: linear-gradient(105deg, transparent, rgba(255,255,255,.60), transparent);
+    animation: tier-shine 2.8s ease-in-out infinite;
+  }
+  @keyframes tier-shine { 0% { left: -70%; } 55% { left: 135%; } 100% { left: 135%; } }
 
   /* ---------- 吸顶导航 ---------- */
   .nav {
@@ -159,9 +181,9 @@
   .empty { color: var(--muted); text-align: center; padding: 40px 0; font-size: 14px; }
 
   /* ---------- 表格 ---------- */
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
   tbody tr:hover { background: #f8fafc; }
 
   /* ---------- 批次表：临近到期的行标识 ---------- */
@@ -884,6 +906,17 @@
   // 联网检查在服务端后台线程做、结果缓存 12h，所以这个请求打的是本地服务，极快。
   const UPDATE_NOTICE_KEY = 'credits_update_notice_dismissed';
 
+  // 账号类型（/console/account 的 type）→ 中文。仅收录**已确认**的取值；
+  // 未收录的原样显示（英文），空值走各自兜底（顶部隐藏标签、卡片标注未识别）。
+  const ACCOUNT_TYPE_LABELS = { personal: '个人版' };
+  // 套餐档位徽章：返回带档位色 CSS 类的彩色胶囊 HTML；未知档位归入中性灰。
+  function tierBadge(t) {
+    if (!t) return '';
+    const known = { free: 1, pro: 1, plus: 1, max: 1 };
+    const k = String(t).toLowerCase();
+    return '<span class="tier-badge ' + (known[k] ? 'tier-' + k : 'tier-free') + '">' + t + '</span>';
+  }
+
   function renderUpdateNote(d) {
     const el = document.getElementById('update-note');
     if (!el) return;
@@ -1106,6 +1139,13 @@
           '<select class="select-input" id="alert-hours" style="width:100%;">' + sel + '</select>' +
         '</div>' +
         '<div class="set-block">' +
+          '<label class="set-label">预计可用天数 · 观测窗口（天）</label>' +
+          '<input type="number" class="select-input" id="avg-window" min="7" max="90" step="1" ' +
+            'style="width:100%;" value="' + ((DATA && DATA.daily_avg_window) || 30) + '">' +
+          '<div class="set-note">「预计可用天数」按近 N 天日均消耗估算（N = 此窗口）。' +
+            '太短会被短期波动主导（实测 7 天 → 结果荒谬），默认 30 天，范围 7~90。</div>' +
+        '</div>' +
+        '<div class="set-block">' +
           '<label class="set-label">我通常上班的日子</label>' +
           '<div class="wd-row" id="wd-row">' + chips + '</div>' +
           '<div class="set-note">批次若在你的非工作日到期，提醒会提前到你上班的日子 —— ' +
@@ -1142,8 +1182,19 @@
         alert('没有勾选任何上班日 —— 已恢复为「周一至周五」。');
       }
       lsSet(USE_HOLIDAYS_KEY, mask.querySelector('#use-holidays').checked ? '1' : '0');
+      // 观测窗口写后端（统计口径在服务端算，保持单一口径），写完再重载
+      const _aw = parseInt(mask.querySelector('#avg-window').value, 10);
+      const aw = isNaN(_aw) ? 30 : _aw;
       mask.remove();
-      location.reload();   // 这些设置决定"首屏要不要弹框"，重载最省事也最不易漏
+      fetch('/api/set-config?key=avg_window_days&value=' + aw, { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .catch(function () { return { ok: false, message: '无法连接本地服务' }; })
+        .then(function (res) {
+          if (res && res.ok === false) {
+            alert('观测窗口未保存：' + ((res && res.message) || '未知原因'));
+          }
+          location.reload();   // 这些设置决定"首屏要不要弹框"，重载最省事也最不易漏
+        });
     });
   }
 
@@ -1169,10 +1220,21 @@
     const nick = D.nickname || '-';
     document.getElementById('user-name').textContent = nick;
     document.getElementById('user-avatar').textContent = nick.slice(0, 1).toUpperCase();
-    // 用户标签：根据 account.type 显示（personal=个人版，其他显示原值）
-    const acctType = D.account_type || '';
-    const tag = acctType === 'personal' ? '个人版' : (acctType || '—');
-    document.getElementById('user-tag').textContent = tag;
+    // 用户标签：account.type → 中文；未知值显示原值。
+    // 空值兜底为「个人版」——官网浏览器对个人账号统一显示「个人版」，而 /console/account
+    // 对部分账号不返回 type（实测某账号 type 为空，但仍是个人版），故空值按个人版处理。
+    // 顶部标签：只显示套餐档位（Free/Pro/Plus/Max），不显示账号类型（个人版）。
+    // 档位识别不出（如无订阅型包名）则隐藏标签。
+    const tag = D.plan_tier || '';
+    const tagEl = document.getElementById('user-tag');
+    // 顶部档位标签用彩色徽章（Free 银灰 / Pro 蓝 / Plus 紫 / Max 金），见 .tier-badge
+    if (tag) {
+      tagEl.className = '';            // 摘掉 .user-tag 的灰蓝底，外形交给内层徽章
+      tagEl.innerHTML = tierBadge(tag);
+      tagEl.style.display = '';
+    } else {
+      tagEl.style.display = 'none';
+    }
 
     // 使用摘要
     const sb = document.getElementById('summary-bar');
@@ -1263,7 +1325,7 @@
       { cls: 'green', icon: 'cal', label: '今日签到', value: (D.checkin && D.checkin.today_checked_in) ? '已签到' : '未签到', sub: '连续 ' + (D.checkin && D.checkin.real_streak_days != null ? D.checkin.real_streak_days : (D.checkin ? D.checkin.streak_days : 0)) + ' 天 · 每日 +' + (D.checkin ? D.checkin.daily_credit : 0) },
       authCard,
       // 用户信息（来自 account：nickname / type）
-      { cls: '', icon: 'user', label: '当前账号', value: (D.nickname || '-'), sub: (D.account_type === 'personal' ? '个人版' : (D.account_type || '—')) },
+      { cls: '', icon: 'user', label: '当前账号', value: (D.nickname || '-'), sub: (D.plan_tier ? tierBadge(D.plan_tier) : (ACCOUNT_TYPE_LABELS[D.account_type || 'personal'] || D.account_type || '个人版')) },
     ].filter(Boolean);   // holCard 无数据时为 null
     document.getElementById('sec-overview').innerHTML = cards.map(function (c) {
       return '<div class="card ' + c.cls + '"><div class="card-head">' + ic(c.icon) + '<span>' + c.label + '</span></div>' +
