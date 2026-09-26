@@ -156,6 +156,18 @@
   th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
   tbody tr:hover { background: #f8fafc; }
+
+  /* ---------- 批次表：临近到期的行标识 ---------- */
+  /* 阈值与概览卡「即将到期（7天内）」同口径（后端 compute_waste.soon_days）：
+     表里被标记的行数应当**等于** at_risk_count —— 对不上就说明两处口径写岔了。 */
+  tbody tr.due-soon > td   { background: #fffaeb; }
+  tbody tr.due-urgent > td { background: #fff4f2; }
+  tbody tr.due-soon > td:first-child,
+  tbody tr.due-urgent > td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
+  tbody tr.due-urgent > td:first-child { box-shadow: inset 3px 0 0 var(--red); }
+  .due-tag { margin-left: 6px; padding: 1px 7px; border-radius: 20px; font-size: 11px; white-space: nowrap; }
+  .due-tag.soon   { background: #fff3d6; color: #8a6100; border: 1px solid #f0d9a8; }
+  .due-tag.urgent { background: #ffe4e0; color: #a5342a; border: 1px solid #f2bcb5; }
   .num { font-variant-numeric: tabular-nums; font-family: ui-monospace, Consolas, monospace; }
   .pos { color: var(--green); }
   .neg { color: var(--red); }
@@ -1157,6 +1169,28 @@
   // ---------- 包生命周期 ----------
   const lcState = { kind: 'valid', filter: '' };
   const LC_STATUS_TAG = { 0: 'ok', 3: 'used', 2: 'bad', 1: 'bad' };
+  // 临近到期分档：≤3 天「紧急」、≤7 天「临近」。
+  // 口径必须与后端 compute_waste 的 at_risk 一致（remain>0、未过期、≤soon_days）——
+  // 页面上被标记的行数要等于概览卡「即将到期（7天内）」的数字，否则说明两处写岔了。
+  const DUE_URGENT_DAYS = 3;
+  const DUE_SOON_DAYS = 7;
+
+  function dueText(days) {
+    const d = Math.ceil(days);
+    return d <= 0 ? '今天到期' : (d + ' 天后到期');
+  }
+
+  // 用后端的 exp_ts（毫秒时间戳）判断，而不是解析 cycle_end 字符串 ——
+  // 与 compute_waste 用同一份数据，避免时区/格式解析造成两处口径不一致。
+  function dueInfo(p) {
+    if (!p || !p.exp_ts || (p.remain || 0) <= 0) return null;   // 没余额的批次标了没意义
+    const days = (p.exp_ts - Date.now()) / 86400000;
+    if (days < 0) return null;                                   // 已过期归「已过期」页签管
+    if (days <= DUE_URGENT_DAYS) return { cls: 'due-urgent', tag: 'urgent', text: dueText(days) };
+    if (days <= DUE_SOON_DAYS) return { cls: 'due-soon', tag: 'soon', text: dueText(days) };
+    return null;
+  }
+
   function renderLifecycle(D) {
     const lc = D.packages_lifecycle || {};
     const valid = lc.valid || [], expired = lc.expired || [];
@@ -1196,8 +1230,11 @@
       document.getElementById('lc-tbody').innerHTML = filtered.slice(start, start + 15).map(function (p) {
         const tag = LC_STATUS_TAG[p.status] || 'used';
         const waste = p.wasted > 0 ? '<span class="neg">-' + p.wasted.toFixed(2) + '</span>' : '<span class="bk-sub">—</span>';
-        return '<tr><td class="num">' + (p.cycle_end || '-') + '</td>' +
-               '<td><span class="tag ' + tag + '">' + (p.status_label || '-') + '</span></td>' +
+        const due = dueInfo(p);
+        return '<tr' + (due ? ' class="' + due.cls + '"' : '') + '>' +
+               '<td class="num">' + (p.cycle_end || '-') + '</td>' +
+               '<td><span class="tag ' + tag + '">' + (p.status_label || '-') + '</span>' +
+               (due ? '<span class="due-tag ' + due.tag + '">' + due.text + '</span>' : '') + '</td>' +
                '<td class="num">' + (p.remain || 0).toFixed(2) + '</td>' +
                '<td class="num">' + (p.used || 0).toFixed(2) + '/' + (p.size || 0).toFixed(2) + '</td>' +
                '<td>' + (p.name || '-') + '</td>' +
@@ -1239,7 +1276,14 @@
               ? '；服务端累计口径 ' + p.remain_cum.toFixed(2) + '，本周期口径 ' + p.remain.toFixed(2) + '，本页取后者'
               : '') + '"';
         }
-        return '<tr' + tip + '><td class="num">' + (p.cycle_end || '-') + '</td><td><span class="tag ' + tag + '">' + p.status + '</span></td><td class="num">' + p.remain.toFixed(2) + '</td><td class="num">' + p.used.toFixed(2) + '/' + p.size.toFixed(2) + '</td><td>' + lbl + '</td></tr>';
+        const due = dueInfo(p);
+        return '<tr' + tip + (due ? ' class="' + due.cls + '"' : '') + '>' +
+               '<td class="num">' + (p.cycle_end || '-') + '</td>' +
+               '<td><span class="tag ' + tag + '">' + p.status + '</span>' +
+               (due ? '<span class="due-tag ' + due.tag + '">' + due.text + '</span>' : '') + '</td>' +
+               '<td class="num">' + p.remain.toFixed(2) + '</td>' +
+               '<td class="num">' + p.used.toFixed(2) + '/' + p.size.toFixed(2) + '</td>' +
+               '<td>' + lbl + '</td></tr>';
       }).join('') || '<tr><td colspan="5" class="empty">无匹配批次</td></tr>';
     });
   }

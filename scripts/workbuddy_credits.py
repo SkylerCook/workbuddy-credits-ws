@@ -2009,6 +2009,9 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
          "cycle_based": p.get("cycle_based", False),
          "diverged": p.get("diverged", False),
          "remain_cum": p.get("remain_cum"),
+         # exp_ts：到期毫秒时间戳。前端「积分批次」表据此标「临近到期」——
+         # 与 compute_waste 的 at_risk **用同一个字段**，保证两处口径不会漂移。
+         "exp_ts": p["exp_ts"],
          "status": "可用" if p["available"] else ("已过期" if p["expired"] else "已用完")}
         for p in ordered
     ]
