@@ -38,6 +38,45 @@ LANDING_PATH = "/profile/plans-usage"
 # 会话探针：拿它判断"登录态是否可用"。选它是因为返回体小、只读、无副作用。
 SESSION_PROBE = "/billing/meter/get-user-resource-summary"
 
+
+def _delete_taskbar_tab(hwnds):
+    """用 `ITaskbarList::DeleteTab` **显式删除**这些窗口的任务栏按钮。
+
+    为什么需要：`SW_HIDE` 只让窗口不可见，**不保证** Shell 移除任务栏按钮 ——
+    实测 relogin 后新起的静默窗口会残留「不在视口的 Edge」图标且一直不消失，
+    而窗口本身已是 `visible=False`（说明不是"没隐藏"，是 Shell 的按钮没刷新）。
+    `DeleteTab` 直接删按钮，不依赖 Shell 自动刷新。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import (wintypes, POINTER, c_void_p, c_ulong, c_ushort,
+                            c_ubyte, c_long)
+
+        class _GUID(ctypes.Structure):
+            _fields_ = [("d1", c_ulong), ("d2", c_ushort), ("d3", c_ushort),
+                        ("d4", c_ubyte * 8)]
+
+        clsid = _GUID(0x56FDF344, 0xFD6D, 0x11D0,
+                      (c_ubyte * 8)(0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90))
+        iid = _GUID(0x56FDF342, 0xFD6D, 0x11D0,
+                    (c_ubyte * 8)(0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90))
+        ole32 = ctypes.windll.ole32
+        ole32.CoInitialize(None)
+        ptbl = c_void_p()
+        if ole32.CoCreateInstance(ctypes.byref(clsid), None, 1,
+                                  ctypes.byref(iid), ctypes.byref(ptbl)) != 0 or not ptbl:
+            return
+        vtbl = ctypes.cast(ptbl, POINTER(POINTER(c_void_p))).contents
+        ctypes.WINFUNCTYPE(c_long, c_void_p)(vtbl[3])(ptbl)          # HrInit
+        del_tab = ctypes.WINFUNCTYPE(c_long, c_void_p, wintypes.HWND)(vtbl[5])
+        for h in hwnds:
+            del_tab(ptbl, h)                                          # DeleteTab
+    except Exception:
+        pass
+
+
 # 静默模式启动参数。**绝不要去掉 window-position** —— headful 内核 + 屏幕外坐标：
 # 用户看不到窗口，但保留了 headful 的会话兼容性（headless 会丢会话，实测）。
 LAUNCH_ARGS = [
@@ -518,18 +557,33 @@ class BrowserBridge:
                     hits.append(hwnd)
                 return 1
 
-            user32.EnumWindows(proto(_cb), 0)
+            # 窗口创建可能滞后于进程启动 → 重试枚举，直到出现带标题的主窗口（或超时）。
+            # 只枚举一次的话，Edge 启动稍慢就会漏掉窗口 → 任务栏图标残留。
+            def _has_title(h):
+                t = ctypes.create_unicode_buffer(4)
+                user32.GetWindowTextW(h, t, 4)
+                return bool(t.value)
+
+            deadline = time.time() + max(attempts * wait, 4.0)
+            while True:
+                hits[:] = []                      # 原地清空（_cb 闭包引用了本列表）
+                user32.EnumWindows(proto(_cb), 0)
+                if hits and any(_has_title(h) for h in hits):
+                    break
+                if time.time() >= deadline:
+                    break
+                time.sleep(wait)
             for hwnd in hits:
-                # 静默窗口直接 SW_HIDE 彻底隐藏（**不再恢复显示**）。取数走 CDP
-                # （page.evaluate）与窗口可见性无关，实测隐藏后实时取数正常。
-                # 此前「TOOLWINDOW + SW_HIDE→SW_SHOWNA」对 Edge 不可靠：SW_SHOWNA
-                # 把窗口显示回来后任务栏图标也跟着回归（实测反复踩坑）。故这里
-                # 仅保留 TOOLWINDOW 作防御，靠 SW_HIDE 让窗口从任务栏/Alt-Tab 彻底消失。
+                # 静默窗口彻底隐藏：SW_HIDE（不恢复显示）+ 显式删任务栏按钮。
+                # ⚠️ SW_HIDE 只让窗口不可见，**不保证** Shell 移除任务栏按钮 ——
+                # 实测 relogin 后新起的静默窗口会残留图标且一直不消失（窗口其实
+                # 已 visible=False）。故补 _delete_taskbar_tab 显式删除按钮。
                 style = get_wl(hwnd, GWL_EXSTYLE)
                 set_wl(hwnd, GWL_EXSTYLE, (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW)
                 user32.ShowWindow(hwnd, 0)    # SW_HIDE
             if hits:
-                self.log("静默浏览器窗口已彻底隐藏（%d 个窗口）" % len(hits))
+                _delete_taskbar_tab(hits)
+                self.log("静默浏览器窗口已隐藏并从任务栏移除（%d 个窗口）" % len(hits))
         except Exception as e:
             self.log("隐藏任务栏图标失败（不影响取数）: %s" % e)
 
@@ -685,8 +739,23 @@ class BrowserBridge:
             out["expired"] = True
         return out
 
+    def _probe_page(self, page):
+        """在页面里真实请求只读探针：200 = 会话**服务端有效**（权威判据）。
+
+        为什么不能只看 cookie：`KEYCLOAK_SESSION` 是 Keycloak 的 **SSO 层**痕迹，
+        SSO 未过期 ≠ 业务会话有效 —— 实测 cookie 看似已登录（有 KEYCLOAK_SESSION、
+        session 长度也够），真实调用却仍是 401；据此判「登录成功」会**提前关窗**，
+        用户根本没机会真正登录（表现为「登录窗弹出又消失」，且取数依旧失败）。
+        evaluate 失败（页面跳转中）返回 False，只会继续轮询、不会误判成功。
+        """
+        try:
+            res = page.evaluate(JS_CALL, [SESSION_PROBE, {}, "POST"])
+            return bool(res and res.get("status") == 200)
+        except Exception:
+            return False
+
     def _relogin_flow(self, p, payload):
-        """用可见窗口请用户登录，轮询 session cookie 直到有效或超时。返回 (ok, msg)。
+        """用可见窗口请用户登录，轮询到**服务端探针 200** 或超时。返回 (ok, msg)。
 
         判定登录成功**不看「页面发探针请求」** —— 登录后页面可能跳转/导航，
         `page.evaluate` 会反复失败导致误判超时（实测「登录成功但工作台没自动刷新」）。
@@ -702,8 +771,9 @@ class BrowserBridge:
             deadline = time.time() + wait_seconds
             while time.time() < deadline:
                 try:
-                    info = self._collect_session(ctxv)
-                    if info.get("expires_at") and not info.get("expired"):
+                    # 两层判据：cookie 仅作「是否值得探针」的快速筛（省一次页面调用），
+                    # 真正的「登录成功」以**服务端探针 200** 为准（cookie 不可靠，见 _probe_page）。
+                    if self._collect_session(ctxv).get("authenticated") and self._probe_page(pv):
                         # 记住登录用的浏览器：下次 launch 最优先用它，保证 cookie 连续
                         write_last_channel(self._channel)
                         # 若用户偏好还是「auto」，固化为这次实际登录的浏览器

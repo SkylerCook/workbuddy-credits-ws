@@ -490,6 +490,7 @@
       <span class="tb-divider" data-page-node-id="EO02MBK4FZQA1QzoPHXYQe"></span>
       <button class="btn checkin" id="checkin-btn" title="无需打开 WorkBuddy，直接完成每日签到">立即签到</button>
       <button class="btn" id="alert-settings">提醒设置</button>
+      <button class="btn" id="update-check-btn" title="主动联网检查是否有新版本">检查更新</button>
       <button class="btn primary" id="refresh-btn" data-page-node-id="fF8HaKGe52vo94LTj6a8FP">刷新数据</button>
     </div>
   </div>
@@ -1014,6 +1015,51 @@
         }
       })
       .catch(function () { /* 检查失败 → 静默：绝不因为"查更新失败"打扰用户 */ });
+  }
+
+  function checkUpdateNow() {
+    // 用户主动「检查更新」：触发后台强制刷新，轮询 /api/update 直到 checked_at 变化
+    // 拿到新结果，按结果给明确反馈（有更新 / 已最新 / 失败）。
+    if (isStaticMode()) return;
+    const btn = document.getElementById('update-check-btn');
+    const setBtn = function (txt) {
+      if (btn) { btn.disabled = (txt === '检查中…'); btn.textContent = txt; }
+    };
+    setBtn('检查中…');
+    fetchWithTimeout('/api/update', 8000)
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (before) {
+        const base = (before && before.checked_at) || 0;
+        return fetchWithTimeout('/api/update-check', 8000)
+          .catch(function () { return { ok: false }; })
+          .then(function () { return base; });
+      })
+      .then(function (base) {
+        const t0 = Date.now();
+        (function poll() {
+          if (Date.now() - t0 > 30000) {
+            setBtn('检查更新');
+            alert('检查超时，请稍后重试（网络可能不通）');
+            return;
+          }
+          fetchWithTimeout('/api/update', 8000)
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+              const fresh = d && d.state && (!base || (d.checked_at && d.checked_at !== base));
+              if (!fresh) { setTimeout(poll, 2000); return; }
+              renderUpdateNote(d);
+              setBtn('检查更新');
+              if (d.state === 'same') {
+                alert('已是最新版本 v' + (d.local || d.remote || ''));
+              } else if (d.state === 'error') {
+                alert('检查失败：' + (d.reason || '网络不通'));
+              }
+              // state === 'newer' 时提示条已由 renderUpdateNote 显示，无需额外弹窗
+            })
+            .catch(function () { setTimeout(poll, 2000); });
+        })();
+      });
   }
 
   function checkExpiryAlert(D) {
@@ -1938,23 +1984,30 @@
           if (st) st.textContent = '登录成功，正在刷新…';
           setTimeout(function () { location.reload(); }, 700);
         } else {
-          // 服务端判定「未完成」（如登录判定超时），但登录可能已实际成功（cookie 已写入）
-          // —— 主动探测一次：会话恢复了就刷新，别让用户卡在「未完成」还得手动刷新。
-          fetchWithTimeout('/api/overview', 60000)
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-              if (d && !d.can_relogin && !d.error) {
-                if (st) st.textContent = '登录已生效，正在刷新…';
-                setTimeout(function () { location.reload(); }, 500);
-                return;
-              }
-              if (btn) { btn.disabled = false; btn.textContent = '重新登录'; }
-              if (st) st.textContent = '未完成：' + ((res && res.message) || '未知原因');
-            })
-            .catch(function () {
-              if (btn) { btn.disabled = false; btn.textContent = '重新登录'; }
-              if (st) st.textContent = '未完成：' + ((res && res.message) || '未知原因');
-            });
+          // 服务端判定「未完成」（如探针因页面跳转没测到），但登录可能已实际成功
+          // —— 主动探测：会话恢复了就刷新，别让用户卡在「未完成」还得手动刷新。
+          // 重试多次是为了覆盖「服务端粘性标志 TTL 尚未过期」与 worker 重启的空窗。
+          let tries = 0;
+          (function probe() {
+            tries++;
+            fetchWithTimeout('/api/overview', 60000)
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                if (d && !d.can_relogin && !d.error) {
+                  if (st) st.textContent = '登录已生效，正在刷新…';
+                  setTimeout(function () { location.reload(); }, 500);
+                  return;
+                }
+                if (tries < 6) { setTimeout(probe, 3000); return; }
+                if (btn) { btn.disabled = false; btn.textContent = '重新登录'; }
+                if (st) st.textContent = '未完成：' + ((res && res.message) || '未知原因');
+              })
+              .catch(function () {
+                if (tries < 6) { setTimeout(probe, 3000); return; }
+                if (btn) { btn.disabled = false; btn.textContent = '重新登录'; }
+                if (st) st.textContent = '未完成：' + ((res && res.message) || '未知原因');
+              });
+          })();
         }
       })
       .catch(function (e) {
@@ -2253,6 +2306,10 @@
 
   document.getElementById('refresh-btn').addEventListener('click', function () {
     refreshData(true);
+  });
+
+  document.getElementById('update-check-btn').addEventListener('click', function () {
+    checkUpdateNow();
   });
 
   // 面板状态条：点名称跳到该面板，点 ↻ 只刷新该面板（fresh=1，仅重取它拥有的数据源）

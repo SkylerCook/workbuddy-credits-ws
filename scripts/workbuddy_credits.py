@@ -256,6 +256,33 @@ def _session_short_circuit():
         return False   # 到期：放行，给一次真实重试的机会（成功会在 _bridge_call 里清标志）
     return True
 
+
+_SESSION_LOGGED_OK = False   # 本进程内「会话有效」只记一次，避免刷屏
+
+
+def _log_session(event, detail=""):
+    """会话事件日志（print → serve.log）。
+
+    目的是**累积「cookie 到期 vs 实际失效」的观测数据**：cookie 上写 7 天，但实测
+    服务端会话可能更早失效（9-27 还成功、9-28 就 401）；多记几次就能看出真实规律。
+    """
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        exp_s, left = "-", "-"
+        try:
+            info = get_bridge().session_info() or {}
+            exp = info.get("expires_at")
+            if exp:
+                exp_s = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(exp / 1000.0))
+            left = info.get("days_left", "-")
+        except Exception:
+            pass
+        print("[session] %s | cookie到期=%s | 剩余=%s天 | %s | %s"
+              % (ts, exp_s, left, event, detail))
+    except Exception:
+        pass
+
+
 _BRIDGE = None
 _BRIDGE_LOCK = threading.Lock()
 
@@ -305,9 +332,18 @@ def bridge_close():
 
 def bridge_relogin(wait_seconds=300):
     """弹出**可见**窗口请用户重新登录。返回 (ok, message)。"""
+    global _SESSION_LOGGED_OK
     ok, msg = get_bridge().relogin(wait_seconds=wait_seconds)
+    # ⚠️ **无论成败都清「过期」标志**：relogin 已尝试过，会话状态可能已变（用户
+    # 实际登录成功、但探针因页面跳转没测到 → 返回 False）。若不清，前端兜底探测
+    # /api/overview 会被粘性标志短路成 session_expired → **页面不刷新**（实测）。
+    # 清掉后交由真实调用重新判定：有效则前端刷新，无效则再次置位（用户可再登）。
+    SESSION_STATE.update(expired=False, at=None, reason="")
     if ok:
-        SESSION_STATE.update(expired=False, at=None, reason="")
+        _SESSION_LOGGED_OK = True   # 刚登录，视为本进程已记过「有效」
+        _log_session("重新登录成功", "")
+    else:
+        _log_session("重新登录未完成", msg or "")
     return ok, msg
 
 
@@ -506,9 +542,14 @@ def _bridge_call(path, body=None):
         if SESSION_STATE["expired"]:
             # 会话在浏览器侧已恢复（自愈）：清除粘性标志，让后续请求不再短路
             SESSION_STATE.update(expired=False, at=None, reason="")
+        global _SESSION_LOGGED_OK
+        if not _SESSION_LOGGED_OK:
+            _SESSION_LOGGED_OK = True
+            _log_session("会话有效（首次取数成功）", "")
         return res["data"], None
     if res["kind"] == "session_expired":
         SESSION_STATE.update(expired=True, at=time.time(), reason=res.get("error") or "")
+        _log_session("会话失效（服务端 401）", res.get("error") or "")
         return None, "浏览器会话已过期，请在工作台点「重新登录」后重试"
     return None, res.get("error") or "浏览器桥调用失败"
 
@@ -581,6 +622,7 @@ def api_account_info():
         if res["kind"] == "session_expired":
             SESSION_STATE.update(expired=True, at=time.time(),
                                  reason=res.get("error") or "")
+            _log_session("会话失效（账号接口 401）", res.get("error") or "")
             return None, "浏览器会话已过期"
         return None, res.get("error") or "取账号信息失败"
     login = load_login()
@@ -2464,7 +2506,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
 # 这里的职责仅是「让用户知道有新版本」，所以它永远不改任何本地文件。
 UPDATE_REPO = "https://github.com/SkylerCook/workbuddy-credits-ws"   # 与 update.py 的 DEFAULT_REPO 一致
 UPDATE_CHECK_FILE = os.path.join(DATA_DIR, "update_check.json")
-UPDATE_CHECK_TTL = 1 * 3600       # 检查成功：1 小时内不重复联网
+UPDATE_CHECK_TTL = 24 * 3600      # 检查成功：24 小时内不重复联网（有「检查更新」按钮可主动绕过）
 # 为什么从 12h 缩到 1h（2026-09-26）：12h 窗口意味着「新版本发布后，用户最多 12 小时
 # 看不到提示」——发布前刚检查过一次（结论 same）就会被缓存住。GitHub 匿名限流 60 次/时，
 # TTL=1h 每小时最多联网 1 次，远在预算内；发现延迟从 12h 降到 1h。
@@ -2569,6 +2611,29 @@ def update_status(trigger=True):
 
                 threading.Thread(target=_bg, name="wb-update-check", daemon=True).start()
     return st
+
+
+def force_update_check():
+    """强制后台联网检查（**绕过缓存 TTL**）。返回 True 表示已触发刷新。
+
+    用户点「检查更新」时调用 —— 区别于 `update_status` 的「缓存过期才刷」。
+    联网仍在后台线程（约束不变），绝不在请求线程里发生。
+    """
+    global _update_checking
+    with _update_lock:
+        if _update_checking:
+            return False   # 已有检查在进行，别重复触发
+        _update_checking = True
+
+        def _bg():
+            global _update_checking
+            try:
+                refresh_update_status()
+            finally:
+                _update_checking = False
+
+        threading.Thread(target=_bg, name="wb-update-force", daemon=True).start()
+    return True
 
 
 def strip_prompts(data):

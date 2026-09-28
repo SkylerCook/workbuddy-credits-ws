@@ -346,6 +346,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # 是否有新版本：**只读缓存**（联网在后台线程做，结果缓存 1h）。
             # 本接口永不阻塞、不修改任何本地文件 —— 升级由用户显式跑 update.py。
             self._send_json(wc.update_status())
+        elif path == "/api/update-check":
+            # 用户主动「检查更新」：绕过缓存 TTL，后台强制联网刷新一次；前端轮询
+            # /api/update 观察 checked_at 变化拿到新结果。
+            started = wc.force_update_check()
+            self._send_json({"ok": True, "started": started,
+                             "message": "正在检查…" if started else "已有检查在进行"})
         elif path == "/api/update-run":
             # 「立即升级」：用户在提示条上点按钮 = **用户显式触发**升级（与"用户自己跑
             # update.py"等价，不违反「改本地文件必须用户触发」的约束）。
@@ -461,7 +467,31 @@ def _warmup():
         pass
 
 
+def _setup_log():
+    """把服务输出落盘（启动器以无控制台方式拉起，print 本来无处可去）。
+
+    带体积上限：>2MB 滚一轮（serve.log → serve.log.1），避免无限增长。
+    **会话事件（登录 / 失效 / cookie 到期）也写进来**，便于分析「会话保持时间」。
+    """
+    try:
+        log_path = os.path.join(wc.DATA_DIR, "serve.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 2 * 1024 * 1024:
+            try:
+                os.replace(log_path, log_path + ".1")
+            except Exception:
+                pass
+        f = open(log_path, "a", encoding="utf-8", buffering=1)   # 行缓冲
+        sys.stdout = f
+        sys.stderr = f
+        print("\n===== %s 启动服务 v%s =====（日志：%s）"
+              % (time.strftime("%Y-%m-%d %H:%M:%S"), wc.VERSION, log_path))
+    except Exception:
+        pass
+
+
 def main():
+    _setup_log()          # 先落盘日志，之后所有 print 都留痕（含会话事件）
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8090
     # 进程退出时关掉浏览器桥（懒加载启动的那个 Chrome，窗口在屏幕外）
     atexit.register(wc.bridge_close)
