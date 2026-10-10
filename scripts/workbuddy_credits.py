@@ -259,6 +259,26 @@ def _session_short_circuit():
 
 _SESSION_LOGGED_OK = False   # 本进程内「会话有效」只记一次，避免刷屏
 
+# 健康状态：供**启动器**判断「服务在跑、但取数异常」（区别于「服务是否在跑」）。
+# 只记**非会话类**失败 —— 会话过期是「需重新登录」的正常状态，不算服务故障。
+_HEALTH = {"last_ok_at": None, "last_err_at": None, "last_err": ""}
+
+
+def health_status():
+    """服务 + 桥的健康状态（供 /api/health 与启动器判断是否强制重启）。"""
+    ok_at = _HEALTH["last_ok_at"]
+    err_at = _HEALTH["last_err_at"]
+    # 「有错误、且错误晚于（或没有）成功」= 取数异常 → 启动器应重启服务
+    degraded = bool(err_at) and (not ok_at or err_at > ok_at)
+    return {
+        "ok": True,
+        "version": VERSION,
+        "last_ok_at": ok_at,
+        "last_err_at": err_at,
+        "last_err": (_HEALTH["last_err"] or "")[:200],
+        "degraded": degraded,
+    }
+
 
 def _log_session(event, detail=""):
     """会话事件日志（print → serve.log）。
@@ -539,6 +559,7 @@ def _bridge_call(path, body=None):
         return None, "浏览器桥不可用: %s" % e
     res = bridge.call(BRIDGE_PREFIX + path, body)
     if res["ok"]:
+        _HEALTH["last_ok_at"] = time.time()
         if SESSION_STATE["expired"]:
             # 会话在浏览器侧已恢复（自愈）：清除粘性标志，让后续请求不再短路
             SESSION_STATE.update(expired=False, at=None, reason="")
@@ -551,6 +572,9 @@ def _bridge_call(path, body=None):
         SESSION_STATE.update(expired=True, at=time.time(), reason=res.get("error") or "")
         _log_session("会话失效（服务端 401）", res.get("error") or "")
         return None, "浏览器会话已过期，请在工作台点「重新登录」后重试"
+    # 非会话类失败（桥异常 / 页面失效等）→ 记入健康状态，供启动器判断「取数是否异常」
+    _HEALTH["last_err_at"] = time.time()
+    _HEALTH["last_err"] = res.get("error") or ""
     return None, res.get("error") or "浏览器桥调用失败"
 
 

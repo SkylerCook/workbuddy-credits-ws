@@ -146,7 +146,9 @@ HUB = SourceHub()
 # 页面存活心跳：工作台页面定时发 /api/heartbeat 刷新此值；关闭全部页面后触发退出。
 _last_heartbeat = time.time()
 _pending_close = 0.0        # 收到页面告别（pagehide）的时间戳；0 = 无待关闭
-IDLE_TIMEOUT = 300          # 心跳兜底超时（容忍浏览器后台标签页节流与短期冻结，不误杀）
+# ⚠️ 心跳超时兜底已**停用**（v1.7.13）：实测 Edge「睡眠标签页」会让不活跃标签的 JS
+# 整体停掉（心跳停、页面却没关），据此判"已关闭"必然误关。仅保留常量作参考。
+IDLE_TIMEOUT = 300
 BYE_CONFIRM_SECONDS = 75    # 页面告别后的确认期：期间仍有其它标签页心跳则取消关闭
 
 
@@ -161,27 +163,24 @@ def _shutdown(reason):
 
 
 def _idle_watchdog():
-    """看门狗：页面关闭后自动退出后台（服务 + 浏览器桥一并清理）。
+    """看门狗：页面**明确关闭**后自动退出后台（服务 + 浏览器桥一并清理）。
 
-    两路触发：
-    1. **告别路**：页面关闭时 `pagehide` 发 `/api/bye`，进入确认期；若确认期内
-       无其它标签页心跳，则判定「最后一个标签页已关」→ 退出（快，约 75 秒）。
-    2. **心跳兜底路**：页面既没告别、心跳也停满 IDLE_TIMEOUT（如浏览器把标签页
-       **冻结**了，JS 停、但 pagehide 不触发）→ 退出（慢，兜底冻结场景）。
-    标签页仅切到后台（未冻结）时定时器仍被浏览器以 ~1 次/分钟节流发出，不会误杀。
+    只认**告别路**：页面关闭时 `pagehide` 发 `/api/bye`，进入确认期；确认期内若无
+    其它标签页心跳，则判定「最后一个标签页已关」→ 退出（约 75 秒）。
+
+    ⚠️ **不做心跳超时兜底**（v1.7.13 收紧）：实测 Edge「睡眠标签页」（本机阈值 300s）
+    会让**不活跃标签的 JS 整体停掉** —— 心跳停了、**页面却没关**；据此判"已关闭"
+    必然**误退**（用户切走一会儿回来，服务已经没了）。而"关闭"有可靠信号（pagehide）；
+    心跳则无法区分「睡眠 / 冻结」与「关闭」，故退场。心跳仅保留用于告别确认期的判断。
     """
     global _pending_close
     while True:
         time.sleep(15)
-        now = time.time()
-        if _pending_close:
-            if now - _pending_close > BYE_CONFIRM_SECONDS:
-                if _last_heartbeat >= _pending_close:
-                    _pending_close = 0.0   # 确认期内有其它标签页心跳 → 取消
-                else:
-                    _shutdown("工作台已关闭，自动退出后台…")
-        elif now - _last_heartbeat > IDLE_TIMEOUT:
-            _shutdown("工作台页面长时间无心跳，自动退出后台…")
+        if _pending_close and time.time() - _pending_close > BYE_CONFIRM_SECONDS:
+            if _last_heartbeat >= _pending_close:
+                _pending_close = 0.0   # 确认期内有其它标签页心跳 → 取消
+            else:
+                _shutdown("工作台已关闭，自动退出后台…")
 
 
 def _auth_status(auth_path):
@@ -330,6 +329,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/version":
             # 瞬时返回，不打上游：页头版本号要立刻可见
             self._send_json({"version": wc.VERSION, "ok": True})
+        elif path == "/api/health":
+            # 健康状态：供**启动器**判断「服务在跑、但取数异常」时是否强制重启。
+            # 只读内存标志，不联网、不打上游，瞬时返回。
+            self._send_json(wc.health_status())
         elif path == "/api/heartbeat":
             # 页面存活心跳：工作台页面定时发；一旦页面全部关闭、超时未收到，
             # 看门狗会自动退出后台（服务 + 浏览器桥一并清理）。

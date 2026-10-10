@@ -692,9 +692,16 @@ class BrowserBridge:
 
     @staticmethod
     def _looks_closed(e):
-        """判断异常是否为「浏览器/页面已关闭」类（触发自动重建）。"""
+        """判断异常是否为「浏览器/页面已失效」类（触发自动重建窗口）。
+
+        不只「窗口被关」：**页面加载失败/导航中断**也会让页面内的 fetch 一直失败
+        （实测 `Failed to fetch`，请求根本发不出去，取数全挂），此时重建窗口是唯一出路。
+        """
         s = str(e).lower()
-        return ("closed" in s or "target page" in s or "browser has been" in s)
+        return ("closed" in s or "target page" in s or "browser has been" in s
+                or "failed to fetch" in s
+                or "execution context was destroyed" in s
+                or "cannot find context" in s)
 
     def _eval_calls(self, page, calls):
         """执行一批 call 并把结果塞回各自的 Future。"""

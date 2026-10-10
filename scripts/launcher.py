@@ -4,11 +4,13 @@
 积分工作台启动器（通用，随 skill 分发）
 
 用途：
-  1. 默认（无参数）：启动服务（若未运行 / 版本过旧则接管）+ 打开系统浏览器
+  1. 默认（无参数）：启动服务（若未运行 / 版本过旧 / **取数异常**则接管）+ 打开系统浏览器
      —— 供「双击 VBS」场景使用，服务以独立进程（DETACHED）常驻，脱离 WorkBuddy 桌面端
-  2. --gen-vbs：探测本机 pythonw 路径，生成双击启动器 VBS 到专门目录
+  2. --restart：跳过「复用判断」，**无条件重启**服务（版本相同也重启）
+     —— 用户遇到异常时的自救入口（默认行为只在「版本不符 / 取数异常」时才重启）
+  3. --gen-vbs：探测本机 pythonw 路径，生成双击启动器 VBS 到专门目录
      —— 供 Agent 首次打开工作台时顺带生成（幂等），告知用户以后可双击启动
-  3. --create-shortcut <desktop|startmenu>：创建快捷方式到桌面 / 开始菜单「所有应用」
+  4. --create-shortcut <desktop|startmenu>：创建快捷方式到桌面 / 开始菜单「所有应用」
      —— 供 Agent 对话入口（复用 shortcut.py）
 
 设计要点：
@@ -123,6 +125,21 @@ def _probe_version(timeout=1.5):
             if getattr(r, "status", 200) != 200:
                 return None
             return (json.loads(r.read().decode("utf-8")) or {}).get("version")
+    except Exception:
+        return None
+
+
+def _probe_health(timeout=3):
+    """探服务健康状态（/api/health）。拿不到返回 None。
+
+    为什么要它：「版本相同」不等于「服务可用」—— 实测服务在跑、桥的页面却已失效，
+    取数全挂；此时若只按版本复用，用户会「以为重启了、其实没重启」。
+    """
+    try:
+        with _OPENER.open(URL + "/api/health", timeout=timeout) as r:
+            if getattr(r, "status", 200) != 200:
+                return None
+            return json.loads(r.read().decode("utf-8")) or {}
     except Exception:
         return None
 
@@ -305,27 +322,38 @@ def _wait_ready(want, tries=24):
     return _port_in_use()
 
 
-def _ensure_running():
-    """确保 8090 上跑的是**当前版本**的服务，返回是否可用。
+def _ensure_running(force=False):
+    """确保 8090 上跑的是**当前版本、且取数正常**的服务，返回是否可用。
 
     为什么不能只看端口：旧进程会一直占着 8090，只判断「端口被占用」就会误判为
     「已在运行」，于是启动器每次都打开旧版页面 —— 表现为页面是新前端、接口却全 404
     （面板报红）。这里改为「端口 + 版本」双校验：版本不符则结束旧进程再拉起新版。
+
+    为什么还要查健康（force=False 时）：**版本相同也不等于可用** —— 实测服务在跑、
+    桥的页面却已失效（取数全挂，报 Failed to fetch），此时按版本复用会让用户
+    「以为重启了、其实没重启」。故版本相同时再看一眼 /api/health：取数异常就强制重启。
+    `force=True`（--restart）跳过上述判断，无条件重启。
     """
     want = _desired_version()
     cur = _probe_version()
 
-    if cur and (want is None or cur == want):
-        return True                      # 已是最新版，直接复用
-
-    if _port_in_use():
+    if not force and cur and (want is None or cur == want):
+        health = _probe_health()
+        if not health or not health.get("degraded"):
+            return True                  # 版本一致 + 取数正常 → 复用
+        print("服务在跑但取数异常（%s），正在重启…"
+              % ((health.get("last_err") or "")[:60] or "未知原因"))
+    elif force and _port_in_use():
+        print("--restart：强制重启服务…")
+    elif _port_in_use():
         if cur is None:
             print("检测到旧版本服务正占用 %d，正在重启到当前版本…" % PORT)
         else:
             print("本地服务版本 %s ≠ 当前技能 %s，正在重启…" % (cur, want))
-        if not _stop_stale_server():
-            print("无法自动结束占用 %d 的进程，请手动关闭后重试。" % PORT, file=sys.stderr)
-            return False
+
+    if _port_in_use() and not _stop_stale_server():
+        print("无法自动结束占用 %d 的进程，请手动关闭后重试。" % PORT, file=sys.stderr)
+        return False
 
     if not os.path.exists(SERVE):
         print("找不到 serve.py：%s" % SERVE, file=sys.stderr)
@@ -360,9 +388,9 @@ def gen_vbs():
     return 0
 
 
-def start_and_open():
-    """默认行为：起服务 + 打开系统浏览器。"""
-    ok = _ensure_running()
+def start_and_open(force=False):
+    """默认行为：起服务（必要时重启）+ 打开系统浏览器。"""
+    ok = _ensure_running(force=force)
     webbrowser.open(URL)
     return 0 if ok else 1
 
@@ -382,7 +410,7 @@ def main():
         idx = args.index("--create-shortcut")
         target = args[idx + 1] if idx + 1 < len(args) else "desktop"
         return create_shortcut_cmd(target)
-    return start_and_open()
+    return start_and_open(force="--restart" in args)
 
 
 if __name__ == "__main__":
