@@ -322,7 +322,7 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
 > ⚠️ **不要写 commit hash** —— 它每次提交都变，写进来必然过时（写"未提交"同理）。
 > 只记「哪些版本已发布」和「哪些功能已提交、待发版」。
 
-- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10 / v1.7.11 / v1.7.12 / v1.7.13 / v1.7.14
+- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10 / v1.7.11 / v1.7.12 / v1.7.13 / v1.7.14 / v1.7.16（含 v1.7.15）
 - **已发布（2026-09-26 一次攒批发，tag v1.7.3 涵盖）**：v1.4.4 ~ v1.7.3
   - v1.4.4 —— 签到卡区分「真实连续」与「活动周期内」＋ 可用天数改 30 天窗口
   - v1.4.5 —— 凭据加密后优雅降级
@@ -410,6 +410,42 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
   本机 venv 的 `pyvenv.cfg` `home = D:\Program\Python`（稳定路径）→ **永不因客户端更新失效**。
   **沙箱踩坑**：沙箱外 `Start-Process` 起的 serve **仍会被回收**（11:15:18 起、11:16:28 后消失）
   → 服务类验证必须**单次调用内「起 → 测 → 停」**（本次用 subprocess 起 + urllib 轮询 + terminate）。
+- **已发布（v1.7.16，2026-10-11；含未单独发版的 v1.7.15）**：★ **「服务静默消失」真因 —— 服务自己的控制台窗口**。
+  **现象史**：多台机器反馈「工作台正常取数后，服务在无人操作时从 8090 消失，无退出日志、无 traceback，
+  端口直接释放」，用户点刷新才知「本地服务未运行」。另一台机器的 issue
+  （`issue-service-silent-death-v1.7.14.md`）用逐条排除法推断为「外部 `TerminateProcess` 强杀」——
+  **推断正确，但那个"外部"就是用户自己关掉的那个窗口**。
+  **真因（实测）**：服务以 `python.exe`（**console 子系统**）启动时，`CREATE_NO_WINDOW` **与
+  `DETACHED_PROCESS` 同用会被 Windows 静默忽略**（MSDN 明文）→ 进程仍**得到一个控制台**；
+  Win11 默认终端是 **Windows Terminal**，于是**弹出一个命令行窗口**，而**关掉它 = 杀服务**
+  （强杀不触发 atexit、不留任何日志）。证据：`conhost.exe` 的父进程 = **服务进程本身**；
+  `WindowsTerminal.exe` 由 **svchost(-Embedding)** 拉起、是**独立进程** —— 所以"枚举服务进程的
+  可见窗口"看不到它（这正是早期误判「服务无窗口」的原因，记牢这个坑）。
+  **修复**：① `launcher._popen_target()` → `_spawn` 改用同目录 **`pythonw.exe`**（GUI 子系统，
+  **机制上不创建控制台**），缺失时回退 `python.exe`；② `serve._release_console()`：启动时
+  `GetConsoleWindow()` + `FreeConsole()` 兜底；③ `serve._setup_log()` 加固（pythonw 下
+  `sys.stdout/stderr` 为 **None**，重定向失败兜底 devnull，否则任何 `print` 崩服务）。
+  **对比实测**：`python.exe` → 有 `conhost`（复现现象）；`pythonw.exe` → **无任何控制台宿主** ✓
+  **副产物**：venv 的 `python.exe`/`pythonw.exe` 是**重定向器**，会再派生一个真实进程 →
+  这就是「Popen 返回的 pid ≠ 监听 pid」的由来。
+  **★ 教训（高价值）**：**「子进程不要控制台」只能靠 GUI 子系统（pythonw）保证**；
+  `CREATE_NO_WINDOW` 与 `DETACHED_PROCESS` 同用时会被忽略 —— 光靠 creationflags 靠不住。
+- **已发布（v1.7.15，2026-10-11，随 v1.7.16 一起发）**：**让「异常终止」可留痕**（可观测性）。
+  ① **运行标记** `~/.workbuddy/workbuddy-credits-data/serve_state.json`：启动写（pid / 起始 / 版本）、
+  正常退出删；**下次启动若发现残留** → 记一行 `⚠ 上次服务未走正常退出：pid=… 存活 …`
+  （正常退出**必留日志行**，故"标记残留"是比日志更强的信号）。含 `_pid_alive`（Win:
+  OpenProcess + STILL_ACTIVE）、`_fmt_dur`。② **退出观测**：`atexit`（清标记）、`signal`
+  （SIGTERM / SIGINT / SIGBREAK）、`threading.excepthook`（后台线程异常带线程名落日志）。
+  ③ **`POST /api/quit`**（仅本机回环）：`launcher._ask_server_quit()` / `update._ask_quit()`
+  在重启前**先请旧服务正常退出**，避免 `taskkill /F` 把「正常重启」误报成「异常终止」
+  （旧版服务无该接口 → 404 → 回退强杀）。④ **`CREATE_BREAKAWAY_FROM_JOB`**：
+  **`DETACHED_PROCESS` 不脱离 Job Object** —— 父环境带 `KILL_ON_JOB_CLOSE` 的 Job
+  （IDE 任务 / CI / 脚本包装器 / 沙箱）时，服务会随 Job 关闭被一并回收（实测：受限父环境下
+  30–60 秒内静默消失）；该 flag 不被允许时自动回退，不影响启动。⑤ `SKILL.md`：启动方式改为
+  **优先 launcher / 用户双击启动器**，并明确「**不要**用前台 `python scripts/serve.py` ——
+  它占住当前终端，**终端一关服务就没了**」。
+  **端到端实测**：`/api/quit` → 200 + 日志「收到 /api/quit，正常退出…」+ 标记清除 → 再启动**无告警**；
+  `taskkill /F` 强杀 → **标记残留** → 再启动**正确告警**（`pid=… 存活 4 秒`）。
 - **发版提示（v1.7.2 起已简化）**：正文范围由 CI 用 `git describe --tags --abbrev=0 HEAD^`
   自动定界，**README 里不再需要写「本版包含 X~Y」**。
   仍需注意的唯一一件事：**先写好 README 段再打 tag**（否则只能回退到自动 notes）
