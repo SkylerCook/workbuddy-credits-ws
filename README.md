@@ -428,6 +428,38 @@ WorkBuddy 客户端自 2026-09-26 起把凭据**加密落盘**，本技能原先
 
 ## 九、更新日志
 
+### v1.7.14 — 「clone 即用」：Playwright 依赖自动准备 + 落点与客户端更新解耦
+
+**问题**：WorkBuddy 客户端更新会把内置 Python 从「用户目录的实体目录」换成指向安装目录
+（`resources\vendor\python`）的**符号链接**，**原来装在里面的 Playwright 被一并清除**；
+而 `launcher` 的候选解释器只有「`sys.executable` 同目录 / `PATH` / 注册表」三条来源 ——
+在**没有系统 Python** 的机器上**全部指向内置解释器** → 依赖一被清，桥就起不来
+（三个面板一直转圈 / 弹「请安装 playwright」）。
+
+**修复**：
+
+1. **依赖落点改到数据目录的持久 venv**（`~/.workbuddy/workbuddy-credits-data/.venv`）——
+   该目录**不受客户端更新影响**，是唯一稳定的落点；
+2. **候选解释器把它排到最前**（`_candidate_interpreters`）；
+3. **首次自动准备**（`_ensure_playwright_env`）：找不到可用解释器时**自动建 venv +
+   `pip install playwright`**（国内镜像 + 锁版本 `1.58.0`），并弹窗提示「首次约 1–2 分钟」，
+   而不是只丢一句「请安装 playwright」——这才是真正的「clone 即用」；
+4. **告警**：解释器落在 `binaries\python` / `resources\vendor` 时提示「该位置会随更新重置」。
+
+**维护成本（只装一次）**：依赖下载**只有首次**（约 100MB）——venv 建在数据目录，客户端更新不碰它。
+即便 venv 因 base 变化而断链，也只是**就地重建**（几秒），site-packages 保留、**不重下**（实测确认）。
+
+**加固**（2026-10-11 实测后补）：
+
+- 依赖探测改用**真实调用链** `sync_api`（原 `import playwright` 在「base 换了 Python 大版本、
+  site-packages 里旧 ABI 的 greenlet 还在」时会**假就绪** —— 探测通过、起桥才 ImportError）；
+  并在准备依赖时加 `-U`，让这类绑版本的依赖按新解释器一并重装；
+- base 选择**优先路径稳定的解释器**（系统 Python / PATH / 注册表），内置的排最后
+  （`_volatile_rank`）—— venv 的 `pyvenv.cfg` 会记住 base，base 越稳定越不易断链。
+
+**部署注意**：**不要**把 Playwright 装进 WorkBuddy 内置 Python（那个位置会被客户端更新重置）；
+「clone 即用」只需双击启动器，**首次会自动准备依赖（需联网，约 100MB）**。
+
 ### v1.7.13 — 页面失效能自愈；启动器识别「服务在跑但取数异常」
 
 **① 页面失效自动重建（自愈）**：`_looks_closed()` 原只认 `closed` / `target page` /

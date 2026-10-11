@@ -18,6 +18,12 @@
   - VBS 生成到 ~/.workbuddy/launchers/（本地专属，不进 skill 源码、不随更新覆盖、不打进分发包）
   - 「端口占用」不等于「服务可用」：旧进程会一直占着 8090，若只看端口就会误判为
     「已在运行」，导致永远打开旧版页面。故改为「端口 + 版本」双校验（见 _ensure_running）。
+  - **「版本相同」也不等于「可用」**：实测服务在跑、桥却已失效，故版本相同时再看一眼
+    `/api/health`，取数异常即自动重启（见 _probe_health）。
+  - **依赖落点必须稳**：Playwright 装在 `~/.workbuddy/workbuddy-credits-data/.venv`（技能
+    数据目录，**不受 WorkBuddy 客户端更新影响**）；找不到就**自动创建并安装**（见
+    _ensure_playwright_env）。内置 Python 会随客户端更新被替换（实测连装进去的包一起清掉），
+    依赖装在那里下次更新必然失效。
 """
 
 import json
@@ -43,6 +49,18 @@ PORT = 8090
 URL = "http://127.0.0.1:%d" % PORT
 VBS_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy", "launchers")
 VBS_PATH = os.path.join(VBS_DIR, "start-credits-dashboard.vbs")
+
+# 技能数据目录（与 workbuddy_credits.DATA_DIR 同源）—— **WorkBuddy 客户端更新不碰它**，
+# 故持久 venv 建在这里：内置 Python 会随客户端更新被替换（实测更新把原目录改名
+# `.deleting.*`，连装进去的 Playwright 一并清掉），往那里装依赖下次更新必然失效。
+DATA_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy", "workbuddy-credits-data")
+PERSIST_VENV = os.path.join(DATA_DIR, ".venv")
+# 锁版本 + 国内镜像：可复现（不吃 PyPI 最新版漂移）、国内下载快。
+PLAYWRIGHT_SPEC = "playwright==1.58.0"
+PIP_MIRROR = "https://pypi.tuna.tsinghua.edu.cn/simple"
+# 依赖探测表达式：走真实调用链（sync_api → greenlet），而非只 import playwright，
+# 以免「base 换大版本、旧 ABI 依赖还在」时假就绪（详见 _python_has_playwright）。
+_PW_PROBE = "from playwright.sync_api import sync_playwright"
 
 # pythonw 无控制台，stdout/stderr 为 None，重定向到 devnull 避免 print 崩溃
 if sys.stdout is None:
@@ -187,8 +205,28 @@ def _stop_stale_server():
     return not _port_in_use()
 
 
+def _volatile_rank(exe):
+    """解释器「易失性」排序键：落在 WorkBuddy 内置目录的排后面。
+
+    内置 Python 会随客户端更新被替换/重置（实测更新把原目录改名 `.deleting.*`，
+    连装进去的包一并清掉）。而 venv 的 `pyvenv.cfg` 会记下 base 的 `home` ——
+    base 落在这种目录时，客户端更新后 venv 就会断链（必须重建）。
+    所以优先用「路径稳定」的解释器做 base。
+    """
+    low = (exe or "").lower().replace("/", "\\")
+    if "\\binaries\\python\\" in low or "\\resources\\vendor\\python" in low:
+        return 1
+    return 0
+
+
 def _python_has_playwright(exe):
-    """探测某解释器是否装了 Playwright（浏览器桥的硬依赖）。"""
+    """探测某解释器是否装了 Playwright（浏览器桥的硬依赖）。
+
+    探测走**真实调用链** `sync_api`（会加载 greenlet 等 C 扩展），而不是只
+    `import playwright`：后者在「venv 的 base 已换成另一大版本的 Python、但
+    site-packages 里旧 ABI 的 greenlet 还在」时会**假就绪** —— 探测通过，
+    真正起桥时才 ImportError（页面表现为面板一直转圈）。
+    """
     if not exe:
         return False
     if (os.path.sep in exe or ":" in exe) and not os.path.exists(exe):
@@ -197,7 +235,7 @@ def _python_has_playwright(exe):
         kw = {"capture_output": True, "timeout": 60}
         if sys.platform == "win32":
             kw["creationflags"] = _NO_WINDOW
-        return subprocess.run([exe, "-c", "import playwright"], **kw).returncode == 0
+        return subprocess.run([exe, "-c", _PW_PROBE], **kw).returncode == 0
     except Exception:
         return False
 
@@ -229,9 +267,18 @@ def _registry_pythons():
     return out
 
 
+def _venv_python(venv_dir):
+    """venv 内的 python 解释器路径（跨平台）。"""
+    if sys.platform == "win32":
+        return os.path.join(venv_dir, "Scripts", "python.exe")
+    return os.path.join(venv_dir, "bin", "python")
+
+
 def _candidate_interpreters():
     """按优先级列出候选解释器。
 
+    **持久 venv 最优先** —— 它建在技能数据目录下，不受 WorkBuddy 客户端更新影响；
+    而内置 Python 会随客户端更新被替换（实测连装在里面的包一起清掉）。
     `python.exe` 排在 `pythonw.exe` 前面 —— 带控制台的解释器里 Playwright 跑得更稳，
     出错也更容易落进日志。
     """
@@ -242,6 +289,7 @@ def _candidate_interpreters():
             seen.add(p)
             out.append(p)
 
+    add(_venv_python(PERSIST_VENV))      # 0) 持久 venv（数据目录，最稳）
     d = os.path.dirname(sys.executable)
     add(os.path.join(d, "python.exe"))
     add(os.path.join(d, "pythonw.exe"))
@@ -286,25 +334,95 @@ def _find_launcher_pythonw():
     return pw if os.path.exists(pw) else exe
 
 
-def _notify(msg):
+def _notify(msg, title="积分工作台 · 启动失败"):
     """双击场景没有控制台 —— 弹系统提示框，否则用户只看到「转圈」而无从得知原因。"""
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, msg, "积分工作台 · 启动失败", 0x30)
+            ctypes.windll.user32.MessageBoxW(None, msg, title, 0x40)
             return
         except Exception:
             pass
     print(msg, file=sys.stderr)
 
 
-def _spawn():
-    """拉起 serve.py。返回 (是否成功, 所用解释器路径 或 失败说明)。"""
+def _is_runnable_python(exe):
+    """该路径是否是一个能跑起来的 Python 解释器。"""
+    if not exe or not os.path.exists(exe):
+        return False
+    try:
+        kw = {"capture_output": True, "timeout": 30}
+        if sys.platform == "win32":
+            kw["creationflags"] = _NO_WINDOW
+        return subprocess.run([exe, "-c", "import sys"], **kw).returncode == 0
+    except Exception:
+        return False
+
+
+def _warn_if_volatile(exe):
+    """解释器落在「会随客户端更新重置」的目录时告警（不阻断）。"""
+    if _volatile_rank(exe):
+        print("⚠️ 当前解释器位于 WorkBuddy 内置目录（%s）——该位置会随客户端更新重置，"
+              "装在这里的依赖可能失效；建议改用数据目录下的持久 venv。" % exe)
+
+
+def _ensure_playwright_env():
+    """确保有一个装了 Playwright 的解释器；**没有就自动建持久 venv 并安装**。
+
+    返回 (解释器路径 或 None, 失败说明 或 None)。
+
+    为什么建在数据目录：WorkBuddy 内置 Python 会随客户端更新被**替换/重置**（实测更新把
+    原目录改名 `.deleting.*`、连装进去的包一起清掉），依赖装在那里**下次更新必然失效**。
+    数据目录不受客户端更新影响，是唯一稳定的落点 —— 这样才谈得上「clone 即用」。
+    """
     exe = _find_serve_python()
+    if exe:
+        _warn_if_volatile(exe)
+        return exe, None
+    # base 选择：**优先路径稳定的解释器**（系统 Python / PATH / 注册表），内置的排最后。
+    # venv 的 pyvenv.cfg 会记住 base —— base 越稳定，venv 越不容易在客户端更新后断链。
+    runnable = [c for c in _candidate_interpreters() if _is_runnable_python(c)]
+    runnable.sort(key=_volatile_rank)        # 稳定排序：同档保持原有优先级
+    base = runnable[0] if runnable else None
+    if not base:
+        return None, ("未找到任何可用的 Python 解释器（连 WorkBuddy 内置的也没有）。\n\n"
+                      "请安装 Python 3.10+ 后重试。")
+    print("未找到装了 Playwright 的解释器，正在准备持久环境（首次约 1-2 分钟）…")
+    _notify("首次启动需要准备依赖（Playwright，约 100MB），请稍候 1–2 分钟。\n\n"
+            "完成后工作台会自动打开，无需重复操作。\n"
+            "依赖装在：%s\n（该位置不受 WorkBuddy 更新影响）" % PERSIST_VENV,
+            "积分工作台 · 首次准备依赖")
+    try:
+        subprocess.run([base, "-m", "venv", PERSIST_VENV], check=True, timeout=180,
+                       capture_output=True, creationflags=_NO_WINDOW)
+    except Exception as e:
+        return None, "创建持久 venv 失败：%s" % e
+    py = _venv_python(PERSIST_VENV)
+    try:
+        # -U：若 venv 是**就地重建**（base 换了版本），site-packages 里旧 ABI 的依赖
+        #（如 greenlet 的 .pyd）需按新解释器重装；不加 -U 时 pip 会因「已满足」而跳过。
+        subprocess.run([py, "-m", "pip", "install", "-U", "-i", PIP_MIRROR, PLAYWRIGHT_SPEC],
+                       check=True, timeout=900, capture_output=True,
+                       creationflags=_NO_WINDOW)
+    except Exception as e:
+        return None, ("安装 Playwright 失败：%s\n\n可手动执行：\n"
+                      "    %s -m pip install -i %s %s" % (e, py, PIP_MIRROR, PLAYWRIGHT_SPEC))
+    if _python_has_playwright(py):
+        print("持久环境就绪：%s" % py)
+        return py, None
+    return None, "Playwright 安装后验证未通过：%s" % py
+
+
+def _spawn():
+    """拉起 serve.py。返回 (是否成功, 所用解释器路径 或 失败说明)。
+
+    依赖缺失时**自动准备持久环境**（建 venv + 装 Playwright），而不是只弹「请安装」——
+    这样才能做到「clone 即用」。
+    """
+    exe, err = _ensure_playwright_env()
     if not exe:
-        return False, ("未找到安装了 Playwright 的 Python 解释器 —— 浏览器桥依赖它取数。\n\n"
-                       "请在命令行执行一次：\n    pip install playwright\n\n"
-                       "（浏览器直接用系统 Edge 或 Chrome，无需再下载内核）")
+        return False, ((err or "未找到可用的 Python 环境")
+                       + "\n\n（浏览器直接用系统 Edge 或 Chrome，无需下载 Playwright 内核）")
     subprocess.Popen([exe, SERVE, str(PORT)], **_detach_kwargs())
     return True, exe
 
