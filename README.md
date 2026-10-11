@@ -428,6 +428,52 @@ WorkBuddy 客户端自 2026-09-26 起把凭据**加密落盘**，本技能原先
 
 ## 九、更新日志
 
+### v1.7.16 — 修「启动弹命令行窗口 / 关掉它服务就死」（服务控制台），即「静默消失」真因
+
+**问题**（实测确认）：服务以 `python.exe`（**console 子系统**）启动时，即使带
+`CREATE_NO_WINDOW`，只要它与 `DETACHED_PROCESS` **同用就会被 Windows 忽略**（MSDN 明文），
+进程因此**得到一个控制台**；Win11 默认由 **Windows Terminal** 承载 → 用户看到一个命令行
+窗口，而**关掉该窗口服务立刻被杀**（无日志 / 无 traceback）。
+
+→ 这就是「服务静默消失」的**真因**：v1.7.15 的运行标记把它归因为"外部强杀"，而那个
+"外部"正是用户关掉的**服务自己的控制台窗口**。证据：`conhost.exe` 的父进程就是服务进程。
+
+**修复**：
+
+1. `launcher._spawn` 改用同目录的 **`pythonw.exe`**（GUI 子系统，**从机制上不创建控制台**）；
+   不存在时回退 `python.exe`。
+2. `serve.py` 启动时调用 `FreeConsole()` 兜底（连继承来的控制台也一并释放，窗口随之消失）。
+3. `_setup_log()` 加固：`pythonw` 下 `sys.stdout`/`sys.stderr` 为 **None**，重定向失败时
+   兜底指向 devnull —— 否则任何 `print` 都会崩掉服务。
+
+**对比实测**：`python.exe` 启动 → `conhost.exe` 的父进程 = 服务进程（**有**控制台，复现现象）；
+`pythonw.exe` 启动 → **无任何控制台宿主** ✓
+
+### v1.7.15 — 让「异常终止」可留痕（运行标记）+ 脱离父 Job + 礼貌停机
+
+**问题**：服务曾出现「运行中静默消失」—— 无退出日志、无 traceback、端口直接释放，页面刷新只报
+「本地服务未运行」。强杀（`taskkill /F` / 进程被结束 / 断电）不触发 Python 层 `atexit`、
+不留任何应用日志，导致事后**完全无法判断**是正常退出还是被杀（排查黑洞）。
+
+**修复**：
+
+1. **运行标记文件**（`~/.workbuddy/workbuddy-credits-data/serve_state.json`）：启动写
+   （pid / 起始时间 / 版本），正常退出删；**下次启动若发现标记残留** → 记一行
+   `⚠ 上次服务未走正常退出：pid=… 起始=… 存活 …`。正常退出（看门狗 / 信号 / `/api/quit` /
+   Ctrl+C）**必然同时留日志行**，所以「标记残留」是比日志更强的信号。
+2. **退出观测补齐**：`atexit`（清标记）、`signal`（SIGTERM / SIGINT / SIGBREAK）、
+   `threading.excepthook`（后台线程异常也带线程名落日志）。
+3. **`POST /api/quit`**（仅本机回环）：让**启动器 / 更新器**在重启前请旧服务**正常退出**，
+   避免 `taskkill /F` 强杀把「正常重启」误报成「异常终止」。
+4. **`CREATE_BREAKAWAY_FROM_JOB`**：**`DETACHED_PROCESS` 并不脱离 Job Object** —— 父环境
+   带 `KILL_ON_JOB_CLOSE` 的 Job 时（IDE 任务 / CI / 脚本包装器 / 沙箱），服务会随 Job 关闭
+   被一并回收（实测：受限父环境下 30–60 秒内静默消失）。带该 flag 创建失败
+   （`ERROR_ACCESS_DENIED`）则自动回退，不影响启动。
+
+**实测（端到端）**：`/api/quit` → 200 + 日志「收到 /api/quit，正常退出…」+ 标记清除；
+再启动无告警；`taskkill /F` 强杀 → 标记残留；再启动**正确告警**
+（`⚠ 上次服务未走正常退出：pid=… 存活 4 秒`）。
+
 ### v1.7.14 — 「clone 即用」：Playwright 依赖自动准备 + 落点与客户端更新解耦
 
 **问题**：WorkBuddy 客户端更新会把内置 Python 从「用户目录的实体目录」换成指向安装目录

@@ -35,6 +35,7 @@ serve.py —— 积分工作台本地服务：提供可刷新的工作台。
 import atexit
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -143,6 +144,138 @@ class SourceHub:
 
 HUB = SourceHub()
 
+# ---------------------------------------------------------------- 退出观测
+# 为什么需要：服务曾出现「运行中静默消失」—— 无退出日志、无 traceback、端口直接释放，
+# 事后完全无法判断是「正常退出」还是「被杀」。强杀（TerminateProcess / taskkill /F）
+# 不触发 Python 层 atexit、不留任何应用日志。这里用**运行标记文件**把这件事变可见：
+#   启动时：若发现上一次的标记仍在 → 上次**没走正常退出**（被强杀 / 崩溃 / 断电）
+#   正常退出（看门狗、信号、/api/quit、Ctrl+C）→ 删除标记
+# 注意：正常退出**必然**同时留下日志行，故「标记残留」是比日志更强的信号。
+_STATE_FILE = "serve_state.json"
+
+
+def _state_path():
+    return os.path.join(wc.DATA_DIR, _STATE_FILE)
+
+
+def _pid_alive(pid):
+    """该 pid 是否仍存在（尽力而为；Windows 用 OpenProcess 判 STILL_ACTIVE）。"""
+    try:
+        pid = int(pid)
+    except Exception:
+        return False
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            k = ctypes.windll.kernel32
+            h = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                ok = k.GetExitCodeProcess(h, ctypes.byref(code))
+                return bool(ok) and code.value == STILL_ACTIVE
+            finally:
+                k.CloseHandle(h)
+        except Exception:
+            return True          # 判不了就保守当作"还活着"，避免误报异常终止
+    try:
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _fmt_dur(sec):
+    try:
+        sec = int(sec)
+    except Exception:
+        return "?"
+    if sec < 60:
+        return "%d 秒" % sec
+    if sec < 3600:
+        return "%d 分 %d 秒" % (sec // 60, sec % 60)
+    return "%d 小时 %d 分" % (sec // 3600, (sec % 3600) // 60)
+
+
+def _arm_state():
+    """启动时调用：先检查上次标记残留（= 上次异常终止），再写本次标记。"""
+    path = _state_path()
+    prev = None
+    try:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                prev = json.load(f)
+    except Exception:
+        prev = None
+    if isinstance(prev, dict) and prev.get("pid"):
+        up = ""
+        if prev.get("started_ts"):
+            try:
+                up = "，存活 %s" % _fmt_dur(time.time() - float(prev["started_ts"]))
+            except Exception:
+                up = ""
+        if _pid_alive(prev.get("pid")):
+            print("[state] 上次运行标记仍在，但 pid=%s 还活着（异常场景，建议核查）"
+                  % prev.get("pid"))
+        else:
+            print("[state] ⚠ 上次服务**未走正常退出**：pid=%s 起始=%s 版本=%s%s"
+                  % (prev.get("pid"), prev.get("started_at"), prev.get("version"), up))
+            print("[state]   退出日志 / 异常栈 / 告别记录三者皆无 ⇒ 多为**被强制终止**"
+                  "（taskkill /F、进程被结束、断电）或原生崩溃；正常退出（看门狗、"
+                  "Ctrl+C、/api/quit）都会留下对应日志行。")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"pid": os.getpid(),
+                       "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                       "started_ts": time.time(),
+                       "version": wc.VERSION}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _disarm_state():
+    """正常退出时调用：删除运行标记（`os._exit` 不走 atexit，各退出路径都要显式调）。"""
+    try:
+        os.remove(_state_path())
+    except Exception:
+        pass
+
+
+def _install_signal_handlers():
+    """捕获可捕获的终止信号 → 走正常退出（留日志 + 清标记）。"""
+    def _on(signum, _frame):
+        print("[signal] 收到信号 %s，按正常退出处理…" % signum)
+        _shutdown("服务被信号 %s 终止" % signum)
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _on)
+        except Exception:
+            pass
+
+
+def _install_thread_hook():
+    """后台线程未捕获异常也落日志（默认只打到 stderr，且没有线程名标注）。"""
+    def _hook(args):
+        try:
+            th = getattr(args.thread, "name", "?") if args.thread else "?"
+            print("[thread] 线程 %s 未捕获异常：%s: %s"
+                  % (th, getattr(args.exc_type, "__name__", "?"), args.exc_value))
+        except Exception:
+            pass
+    try:
+        threading.excepthook = _hook
+    except Exception:
+        pass
+
+
 # 页面存活心跳：工作台页面定时发 /api/heartbeat 刷新此值；关闭全部页面后触发退出。
 _last_heartbeat = time.time()
 _pending_close = 0.0        # 收到页面告别（pagehide）的时间戳；0 = 无待关闭
@@ -155,6 +288,7 @@ BYE_CONFIRM_SECONDS = 75    # 页面告别后的确认期：期间仍有其它�
 def _shutdown(reason):
     """关掉浏览器桥并结束本进程（os._exit 不走 atexit，桥须显式关）。"""
     print(reason)
+    _disarm_state()          # 正常退出 → 清运行标记（os._exit 不触发 atexit）
     try:
         wc.bridge_close()
     except Exception:
@@ -444,6 +578,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             global _pending_close
             _pending_close = time.time()
             self._send_json({"ok": True})
+        elif path == "/api/quit":
+            # 本机回环「礼貌停机」：让启动器 / 更新器在重启前，旧服务能走**正常退出**
+            #（留一行日志 + 清运行标记），而不是被 taskkill /F 强杀成一团黑 —— 否则
+            # 下次启动的「运行标记残留」检查会把这种正常重启误报成「异常终止」。
+            self._send_json({"ok": True, "msg": "服务即将退出"})
+            threading.Thread(
+                target=lambda: (time.sleep(0.3), _shutdown("收到 /api/quit，正常退出…")),
+                daemon=True).start()
         else:
             self._send(b"not found", "text/plain", 404)
 
@@ -475,6 +617,10 @@ def _setup_log():
 
     带体积上限：>2MB 滚一轮（serve.log → serve.log.1），避免无限增长。
     **会话事件（登录 / 失效 / cookie 到期）也写进来**，便于分析「会话保持时间」。
+
+    注意：`pythonw.exe`（GUI 子系统，`_spawn` 优先用它起服务）下 `sys.stdout` /
+    `sys.stderr` 为 **None** —— 若不接管，任何 `print` 都会 AttributeError 崩掉服务。
+    故重定向失败时兜底指向 devnull。
     """
     try:
         log_path = os.path.join(wc.DATA_DIR, "serve.log")
@@ -490,11 +636,41 @@ def _setup_log():
         print("\n===== %s 启动服务 v%s =====（日志：%s）"
               % (time.strftime("%Y-%m-%d %H:%M:%S"), wc.VERSION, log_path))
     except Exception:
+        try:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+            sys.stderr = open(os.devnull, "w", encoding="utf-8")
+        except Exception:
+            pass
+
+
+def _release_console():
+    """释放本进程的控制台（若有），让那个终端窗口消失。
+
+    为什么必须做：Windows 上以 `python.exe`（console 子系统）启动、且 `CREATE_NO_WINDOW`
+    与 `DETACHED_PROCESS` 同用时会**被 Windows 忽略前者**（MSDN），进程因此**得到一个
+    控制台**；Win11 默认由 **Windows Terminal** 承载 → 用户看到一个命令行窗口，而
+    **关掉它服务就被杀**（实测正是「服务静默消失」的真因：无日志 / 无 traceback）。
+    主动 `FreeConsole()`：控制台若只剩本进程附着就会被销毁、窗口随之消失；服务本身
+    不依赖控制台（取数走 CDP，输出已落 serve.log）。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        if k.GetConsoleWindow():
+            k.FreeConsole()
+    except Exception:
         pass
 
 
 def main():
     _setup_log()          # 先落盘日志，之后所有 print 都留痕（含会话事件）
+    _release_console()    # 释放被 Windows 分配的控制台（否则会弹出一个终端窗口）
+    _arm_state()          # 运行标记：识别「上次是否异常终止」，正常退出时清除
+    atexit.register(_disarm_state)
+    _install_signal_handlers()
+    _install_thread_hook()
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8090
     # 进程退出时关掉浏览器桥（懒加载启动的那个 Chrome，窗口在屏幕外）
     atexit.register(wc.bridge_close)

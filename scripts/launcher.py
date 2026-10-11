@@ -79,15 +79,25 @@ def _find_pythonw():
     return sys.executable
 
 
-def _detach_kwargs():
-    """独立进程启动参数：Windows 用 DETACHED+无窗口，Unix 用 setsid。"""
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000   # Windows：让子进程脱离父 Job Object
+
+
+def _detach_kwargs(breakaway=False):
+    """独立进程启动参数：Windows 用 DETACHED+无窗口，Unix 用 setsid。
+
+    `breakaway=True` 额外带 `CREATE_BREAKAWAY_FROM_JOB`：**`DETACHED_PROCESS` 并不脱离
+    Job Object** —— 若 launcher 自身处在带 `KILL_ON_JOB_CLOSE` 的 Job 里（IDE 任务、CI、
+    脚本包装器、沙箱），被拉起的服务仍在同一 Job 中，会随该 Job 关闭被**一并回收**
+    （实测：受限父环境下启动，服务在父命令结束后 30–60 秒内静默消失，无任何日志）。
+    普通双击场景没有 Job，带上该 flag 也无副作用。
+    """
     if sys.platform == "win32":
-        return {
-            "creationflags": subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.CREATE_NO_WINDOW,
-            "close_fds": True,
-        }
+        flags = (subprocess.DETACHED_PROCESS
+                 | subprocess.CREATE_NEW_PROCESS_GROUP
+                 | subprocess.CREATE_NO_WINDOW)
+        if breakaway:
+            flags |= CREATE_BREAKAWAY_FROM_JOB
+        return {"creationflags": flags, "close_fds": True}
     return {"start_new_session": True, "close_fds": True}
 
 
@@ -184,6 +194,21 @@ def _is_python_process(pid):
     return "python" in (r.stdout or "").lower() if r else False
 
 
+def _ask_server_quit(timeout=2.0):
+    """请旧服务「正常退出」（会写日志 + 清运行标记）。成功返回 True。
+
+    旧版服务没有 `/api/quit` → 404 → 返回 False，调用方回退强杀。
+    """
+    try:
+        req = urllib.request.Request(
+            URL + "/api/quit", data=b"{}", method="POST",
+            headers={"Content-Type": "application/json"})
+        with _OPENER.open(req, timeout=timeout) as r:
+            return getattr(r, "status", 200) == 200
+    except Exception:
+        return False
+
+
 def _stop_stale_server():
     """结束占用 8090 的旧服务进程。
 
@@ -197,6 +222,13 @@ def _stop_stale_server():
         print("端口 %d 被非 python 进程占用（PID %d），未自动处理。" % (PORT, pid),
               file=sys.stderr)
         return False
+    # 先**礼貌停机**：让旧服务走正常退出（留日志 + 清运行标记），避免 taskkill /F 强杀
+    # 导致下次启动的运行标记检查误报「异常终止」。旧版无 /api/quit → 404 → 回退强杀。
+    if _ask_server_quit():
+        for _ in range(16):
+            time.sleep(0.25)
+            if not _port_in_use():
+                return True
     _run_hidden(["taskkill", "/PID", str(pid), "/F"])
     for _ in range(24):
         time.sleep(0.25)
@@ -413,6 +445,21 @@ def _ensure_playwright_env():
     return None, "Playwright 安装后验证未通过：%s" % py
 
 
+def _popen_target(exe):
+    """把 serve 的解释器换成同目录的 `pythonw.exe`（GUI 子系统，**绝不创建控制台**）。
+
+    为什么必须换：`python.exe` 是 console 子系统 —— 即使带上 `CREATE_NO_WINDOW`，
+    只要它与 `DETACHED_PROCESS` 同用就会被 Windows **忽略**（MSDN 明文），进程仍会
+    获得一个控制台；Win11 默认用 **Windows Terminal** 承载它，于是用户看到一个命令行
+    窗口，而**关掉该窗口服务立刻被杀**（实测：无日志、无 traceback —— 这正是
+    「服务静默消失」的真因）。`pythonw.exe` 从根上不创建控制台。
+    同目录没有 pythonw 时回退原 exe（serve.py 侧还有 `FreeConsole()` 兜底）。
+    """
+    d = os.path.dirname(exe)
+    pw = os.path.join(d, "pythonw.exe")
+    return pw if os.path.exists(pw) else exe
+
+
 def _spawn():
     """拉起 serve.py。返回 (是否成功, 所用解释器路径 或 失败说明)。
 
@@ -423,8 +470,13 @@ def _spawn():
     if not exe:
         return False, ((err or "未找到可用的 Python 环境")
                        + "\n\n（浏览器直接用系统 Edge 或 Chrome，无需下载 Playwright 内核）")
-    subprocess.Popen([exe, SERVE, str(PORT)], **_detach_kwargs())
-    return True, exe
+    target = _popen_target(exe)
+    try:
+        subprocess.Popen([target, SERVE, str(PORT)], **_detach_kwargs(breakaway=True))
+    except OSError:
+        # 父 Job 不允许 breakaway（ERROR_ACCESS_DENIED）→ 回退普通 flags，别因此起不来
+        subprocess.Popen([target, SERVE, str(PORT)], **_detach_kwargs(breakaway=False))
+    return True, target
 
 
 def _wait_ready(want, tries=24):

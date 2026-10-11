@@ -471,8 +471,31 @@ def is_python_proc(pid):
         return False
 
 
+def _ask_quit(port, timeout=2.0):
+    """礼貌请求旧服务正常退出（v1.7.15+ 提供 `/api/quit`）；旧版无此接口 → False。
+
+    为什么值得先试：`taskkill /F` 是强杀，不触发服务侧的 atexit、不留任何日志 —— 
+    会让下次启动的运行标记检查把这次**正常升级重启**误报成「异常终止」。
+    """
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d/api/quit" % port, data=b"{}", method="POST",
+            headers={"Content-Type": "application/json"})
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as r:
+            return getattr(r, "status", 200) == 200
+    except Exception:
+        return False
+
+
 def stop_service(port):
     killed = []
+    # 先礼貌停机：让旧服务留日志 + 清运行标记，避免强杀造成「异常终止」误报
+    if _ask_quit(port):
+        for _ in range(16):
+            time.sleep(0.25)
+            if not listener_pids(port):
+                return killed
     for pid in listener_pids(port):
         if not is_python_proc(pid):
             continue

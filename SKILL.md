@@ -34,7 +34,13 @@ agent_created: true
 
 用户说「打开工作台」时，按以下流程打开可视化看板：
 
-1. 启动本地服务：后台运行 `python scripts/serve.py`（默认端口 8090）
+1. 启动本地服务（**优先 launcher：无窗口 + 独立进程常驻**）
+   - **首选**：让用户**双击「积分工作台」启动器**（开始菜单 / 桌面快捷方式 → VBS → `pythonw`
+     → `launcher.py`）。全程无窗口；服务以 `DETACHED` 常驻，**关任何窗口都不影响它**。
+   - **Agent 自己拉起时**用 `python scripts/launcher.py`（起服务 + 打开系统浏览器页面）。
+     ⚠ **不要**用前台 `python scripts/serve.py`：它会占住当前终端，**终端一关服务就没了**；
+     且 Agent 所在沙箱/终端在会话结束时也会把它一并回收 —— 这两种情况服务**都不留退出日志**，
+     事后极难定位（v1.7.15 起有运行标记可查，但能避免就避免）。
    - **Windows 沙箱环境排查**：若后台启动后 `/api/data` 报「未找到登录态」（部分 WorkBuddy 沙箱会拦截后台进程读 C 盘登录态），把登录态复制到非 C 盘副本，并用环境变量 `WORKBUDDY_AUTH_FILE` 指向副本后重启：
      ```bash
      cp "$LOCALAPPDATA/CodeBuddyExtension/Data/Public/auth/workbuddy-desktop.info" "<非C盘副本路径>"
