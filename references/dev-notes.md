@@ -322,7 +322,7 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
 > ⚠️ **不要写 commit hash** —— 它每次提交都变，写进来必然过时（写"未提交"同理）。
 > 只记「哪些版本已发布」和「哪些功能已提交、待发版」。
 
-- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10 / v1.7.11 / v1.7.12 / v1.7.13
+- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10 / v1.7.11 / v1.7.12 / v1.7.13 / v1.7.14
 - **已发布（2026-09-26 一次攒批发，tag v1.7.3 涵盖）**：v1.4.4 ~ v1.7.3
   - v1.4.4 —— 签到卡区分「真实连续」与「活动周期内」＋ 可用天数改 30 天窗口
   - v1.4.5 —— 凭据加密后优雅降级
@@ -390,6 +390,26 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
   （用户切走一会儿回来，服务已经没了、点刷新报「本地服务未运行」）。心跳无法区分
   「睡眠 / 冻结」与「关闭」，故**只认 `pagehide` 告别**；`IDLE_TIMEOUT` 常量保留但停用。
   **已知取舍**：极端情况（浏览器崩溃 / 关闭瞬间信号丢失）可能残留服务，用户可双击启动器复用。
+- **已发布（v1.7.14，2026-10-11）**：**「clone 即用」—— Playwright 依赖自动准备 + 落点与
+  客户端更新解耦**。起因：桌面问题报告（另一台**无系统 Python** 的机器实测）—— 客户端更新把
+  内置 Python 换成指向安装目录（`resources\vendor\python`）的**符号链接**，装在里面的
+  Playwright 被一并清除；而 launcher 候选只有「`sys.executable` 同目录 / PATH / 注册表」，在
+  无系统 Python 的机器上**全部指向内置** → 依赖一清，桥起不来（面板一直转圈）。
+  修复（仅 `launcher.py` + manifest + README）：① 依赖落点改到**数据目录持久 venv**
+  （`~/.workbuddy/workbuddy-credits-data/.venv`，客户端更新不碰）② 候选解释器把它**排最前**
+  ③ `_ensure_playwright_env()` 首次**自动建 venv + `pip install playwright`**（清华镜像 +
+  锁版本 `playwright==1.58.0`）+ 弹窗提示「首次约 1–2 分钟」 ④ 内置目录告警（`_warn_if_volatile`）。
+  **实测（本机）**：首次准备 **28.2s**、venv **114.1MB**、`python 3.13.12` + `playwright 1.58.0`；
+  端到端用 venv 解释器起 serve → **1.5s 就绪** → `/api/overview` **200 / 4.6s / 57KB**。
+  **实测后补的加固**：依赖探测改走**真实调用链** `from playwright.sync_api import sync_playwright`
+  （原 `import playwright` 在「base 换了 Python 大版本、site-packages 里旧 ABI 的 greenlet 还在」
+  时会**假就绪** —— 探测过、起桥才 ImportError）；`pip install` 加 **`-U`** 让绑版本的依赖按新
+  解释器重装；新增 `_volatile_rank()` 让 base **优先路径稳定的解释器**、内置的排最后。
+  **维护成本实测（「只装一次」的依据）**：对已存在 venv 再执行 `python -m venv <dir>` →
+  `site-packages` **完整保留**（marker/six.py 都在）→ 断链只需**就地重建（几秒），不重下 100MB**；
+  本机 venv 的 `pyvenv.cfg` `home = D:\Program\Python`（稳定路径）→ **永不因客户端更新失效**。
+  **沙箱踩坑**：沙箱外 `Start-Process` 起的 serve **仍会被回收**（11:15:18 起、11:16:28 后消失）
+  → 服务类验证必须**单次调用内「起 → 测 → 停」**（本次用 subprocess 起 + urllib 轮询 + terminate）。
 - **发版提示（v1.7.2 起已简化）**：正文范围由 CI 用 `git describe --tags --abbrev=0 HEAD^`
   自动定界，**README 里不再需要写「本版包含 X~Y」**。
   仍需注意的唯一一件事：**先写好 README 段再打 tag**（否则只能回退到自动 notes）
