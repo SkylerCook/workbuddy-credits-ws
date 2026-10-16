@@ -1661,6 +1661,33 @@ def compute_real_streak(dates, today=None):
     return n
 
 
+def today_date():
+    """当天日期字符串（YYYY-MM-DD，本地时区）—— 所有"今天"的判断请走这里。"""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def real_streak_days(checkin_dates=None, extra_dates=None, today=None, merged=None):
+    """**「真实连续」签到天数 —— 全项目唯一口径入口。**
+
+    谁必须用：① 工作台「今日签到」卡（`build_dashboard_data`）；
+              ② 签到前后弹框（`serve.do_checkin` 的 message / 前端未签到引导框）。
+    两处若各写各的，就会出现"弹框说一个数、卡片说另一个数"的自相矛盾 ——
+    2026-10-16 实测就是如此：弹框用接口 `streak_days`（**活动周期内**，周期一换归零重算），
+    卡片用 `compute_real_streak`（**跨周期真实连续**），于是同屏两个"连续 N 天"对不上。
+
+    参数：
+        checkin_dates：接口（status）当期 `checkin_dates`；
+        extra_dates  ：额外已知签到日期（L6 包记录反推的跨周期历史，见 `derive_checkin_dates`）；
+        today        ：默认取本机当天；若"今天刚签"，请把今天写进 checkin_dates；
+        merged       ：已合并好的日期全集（调用方已调过 `accumulate_checkin` 时传入，
+                       避免重复读写存档）。
+    """
+    if merged is None:
+        merged = accumulate_checkin(
+            list(checkin_dates or []) + list(extra_dates or []))
+    return compute_real_streak(merged, today or today_date())
+
+
 def accumulate_income(packages):
     """对比 ResourceId 记录新包到账事件，返回全部到账事件。"""
     events = _load_json(INCOME_EVENTS_FILE, {"events": []})
@@ -1976,15 +2003,19 @@ def cmd_checkin(token, uid):
         return 1
     already = bool(st.get("today_checked_in"))
     if already:
-        print("今日已签到，无需重复。连续 %s 天，今日 +%s 积分。"
-              % (st.get("streak_days", "?"), st.get("daily_credit", "?")))
+        # 「连续」统一走 real_streak_days()（真实连续、跨活动周期），
+        # 与工作台卡片和签到弹框同口径 —— 别再用接口的当期 streak_days。
+        print("今日已签到，无需重复。已连续签到 %s 天，今日 +%s 积分。"
+              % (real_streak_days(st.get("checkin_dates")),
+                 st.get("daily_credit", "?")))
         return 0
     data, err = api_daily_checkin(token, uid)
     if err:
         print("签到失败：", err)
         return 1
-    print("签到成功：本次 +%s 积分 | 连续 %s 天"
-          % (data.get("credit", "?"), data.get("streak_days", "?")))
+    today = today_date()
+    print("签到成功：本次 +%s 积分 | 已连续签到 %s 天"
+          % (data.get("credit", "?"), real_streak_days([today], today=today)))
     return 0
 
 
@@ -2018,8 +2049,8 @@ def cmd_analyze(token, uid):
     L.append("【过期浪费】已过期未用完 %d 批 / %.4f 积分；未来 %d 天内到期风险 %d 批 / %.4f 积分"
             % (waste["wasted_count"], waste["wasted"], waste["soon_days"],
                waste["at_risk_count"], waste["at_risk"]))
-    L.append("【签到效率】每日可得 %s 积分 | 连续 %s 天 | 今日已签：%s | 活动：%s"
-            % (st.get("daily_credit", "?"), st.get("streak_days", "?"),
+    L.append("【签到效率】每日可得 %s 积分 | 已连续签到 %s 天 | 今日已签：%s | 活动：%s"
+            % (st.get("daily_credit", "?"), real_streak_days(st.get("checkin_dates")),
                "是" if st.get("today_checked_in") else "否", st.get("activity_name", "-")))
     L.append("【快照统计】已积累 %d 条快照，覆盖 %d 天" % (len(snaps), len(balance)))
     if net_change:
@@ -2288,7 +2319,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
 
     # 累计消耗与今日消耗
     total_used = round(sum(p["used"] for p in packages), 4)
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = today_date()
 
     # 精确消耗（本地 session_usage 表）—— 留守观测层，用于会话明细与预测
     usage = load_usage()
@@ -2378,7 +2409,9 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         list(checkin_dates_raw) + list(pkg_checkin))
     # 真实连续签到天数（跨活动周期）：接口的 streak_days 只算当期、换周期即归零重算，
     # 故用合并后的签到日期自算，供「今日签到」卡展示。
-    real_streak = compute_real_streak(accumulated_checkin, today_str)
+    # 走 real_streak_days() 是刻意的 —— 签到弹框用同一个入口，两处口径才不会漂。
+    real_streak = real_streak_days(checkin_dates_raw, pkg_checkin, today_str,
+                                   merged=accumulated_checkin)
     income_events = accumulate_income(packages)
     ledger = build_ledger({d["date"]: d["credit"] for d in udaily}, packages, accumulated_checkin, daily_credit_val)
     # 收入日数据（签到 + 包到账，按天），供收入日历热力图使用

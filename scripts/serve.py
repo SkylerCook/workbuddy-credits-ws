@@ -411,24 +411,34 @@ def do_checkin():
     if err:
         return {"ok": False, "error": "查询签到状态失败：%s" % err}
     if st.get("today_checked_in"):
+        # 弹框里的「连续 N 天」必须与工作台卡片**同口径**（真实连续、可跨活动周期）：
+        # 接口 streak_days 只统计当前活动周期、换周期即归零重算，直接拿它做文案会出现
+        # 「弹框说 26 天、卡片说 48 天」这类自相矛盾（2026-10-16 实测）。
+        # 故统一走 wc.real_streak_days()（与 build_dashboard_data 同一入口）。
+        real = wc.real_streak_days(st.get("checkin_dates"))
         return {
             "ok": True, "already": True,
-            "streak_days": st.get("streak_days"),
+            "streak_days": st.get("streak_days"),          # 接口周期口径，保留给调用方
+            "real_streak_days": real,                      # 卡片同口径（真实连续）
             "daily_credit": st.get("daily_credit"),
-            "message": "今日已签到（连续 %s 天，每日 +%s 积分）"
-                       % (st.get("streak_days", "?"), st.get("daily_credit", "?")),
+            "message": "今日已签到（已连续签到 %s 天，每日 +%s 积分）"
+                       % (real, st.get("daily_credit", "?")),
         }
     data, err = wc.api_daily_checkin(token, uid)
     if err:
         return {"ok": False, "error": "签到失败：%s" % err}
     # 签到改变了 L4 状态，清缓存让后续请求拿到新值
     HUB.invalidate("checkin")
+    # 刚签完 → 今天必然在签到集合里，并入后与卡片口径一致
+    today = wc.today_date()
+    real = wc.real_streak_days([today], today=today)
     return {
         "ok": True, "already": False,
         "credit": data.get("credit"),
         "streak_days": data.get("streak_days"),
-        "message": "签到成功：+%s 积分，连续 %s 天"
-                   % (data.get("credit", "?"), data.get("streak_days", "?")),
+        "real_streak_days": real,
+        "message": "签到成功：+%s 积分，已连续签到 %s 天"
+                   % (data.get("credit", "?"), real),
     }
 
 
