@@ -301,6 +301,13 @@
   .search-input::placeholder { color: var(--muted); }
   .search-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(34, 211, 238, .15); }
   .select-input { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; color: var(--text); background: var(--card-2); }
+  /* 明细区的小勾选（仅看今日实时提示词）：跟随主色，不再用系统默认蓝 */
+  .chk-label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .chk-label input[type="checkbox"] {
+    width: 13px; height: 13px; margin: 0; cursor: pointer;
+    accent-color: var(--primary);
+  }
+  .chk-label:hover { color: var(--text); }
 
   /* ---------- 浪费统计小卡 ---------- */
   .waste-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
@@ -503,15 +510,47 @@
   .tabs button.active { background: var(--primary); color: var(--on-accent); font-weight: 700; }
   .tabs button:not(.active):hover { color: var(--primary); }
 
-  /* ---------- 构成条（模型 / 客户端占比） ---------- */
-  .bk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 26px; }
-  .bk-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; font-size: 12.5px; }
+  /* ---------- 构成明细（模型 / 客户端 / 用途） ----------
+     三列同构小表：名称左对齐，积分与次数各占一条定宽右对齐列，
+     占比不再画成行下方的细条（5 行散成 5 根断条、行高忽大忽小），
+     改为整行背景条 —— 不占纵向空间，行距统一，比例仍一眼可比。 */
+  .bk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); gap: 0; }
+  .bk-col { min-width: 0; padding: 0 18px; border-left: 1px solid var(--border-strong); }
+  .bk-col:first-child { padding-left: 0; border-left: none; }
+  .bk-hd {
+    display: flex; align-items: baseline; gap: 8px;
+    padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
+  }
+  .bk-hd-t { font-size: 12.5px; font-weight: 600; color: var(--title); }
+  .bk-hd-m { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+  .bk-cols, .bk-row { display: grid; grid-template-columns: minmax(0, 1fr) 74px 34px; gap: 10px; }
+  .bk-cols {
+    padding: 2px 7px 4px; font-size: 10.5px; color: var(--muted);
+    letter-spacing: .4px;
+  }
+  .bk-cols span:nth-child(2), .bk-cols span:nth-child(3) { text-align: right; }
+  .bk-row {
+    align-items: center; padding: 3px 7px; border-radius: 5px;
+    font-size: 12.5px; line-height: 1.55;
+    background-image: linear-gradient(90deg,
+      rgba(34, 211, 238, .16) 0,
+      rgba(34, 211, 238, .16) calc(var(--w, 0%) - 1px),
+      transparent var(--w, 0%));
+  }
+  .bk-row:hover { background-color: rgba(148, 163, 184, .07); }
   .bk-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bk-val { color: var(--title); font-weight: 600; }
-  .bk-track { grid-column: 1 / -1; height: 6px; border-radius: 4px; background: rgba(148, 163, 184, .14); overflow: hidden; }
-  .bk-fill {
-    height: 100%; border-radius: 4px;
-    background: linear-gradient(90deg, rgba(34, 211, 238, .55), var(--primary));
+  .bk-val {
+    text-align: right; color: var(--title); font-weight: 600;
+    font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.2px;
+  }
+  .bk-cnt {
+    text-align: right; color: #8794A6; font-size: 12px;
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+  }
+  .bk-row.is-top .bk-name { color: var(--title); font-weight: 500; }
+  @media (max-width: 900px) {
+    .bk-col { padding: 0; border-left: none; }
+    .bk-grid { gap: 18px; }
   }
   .bk-sub { font-size: 11px; color: var(--muted); }
 
@@ -658,7 +697,7 @@
       <h2 data-icon="bolt" data-page-node-id="Zq7kMvU2Ys9dRfNbGw4TpL">消耗明细（请求级）</h2>
       <div class="filters" data-page-node-id="Yh2wNcK9Lp4mVeQsXj7BdR">
         <input type="text" class="search-input" id="req-search" placeholder="搜索模型 / 客户端 / 会话 / 提示词" data-page-node-id="Ux5bTnQ3Mv8kLdWsZo1YfG">
-        <label class="bk-sub" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;" data-page-node-id="Pb4vRmN7Kq2sXdLtEw8YjC">
+        <label class="bk-sub chk-label" data-page-node-id="Pb4vRmN7Kq2sXdLtEw8YjC">
           <input type="checkbox" id="req-only-prompt" data-page-node-id="Nc6mYhB2Vt5rLpQxWd3ZkS"> 仅看今日实时提示词
         </label>
         <button class="btn" id="export-requests" style="padding:5px 12px;font-size:12.5px;" data-page-node-id="Jd9fWqZ4Rm6tYvNbLk2XpS">导出</button>
@@ -749,6 +788,11 @@
 (function () {
   let DATA = window.CREDITS_DATA || null;
   let dateRange = { type: '7d', start: null, end: null };
+
+  // 积分千分位 + 两位小数（固定 en-US，不受系统区域设置影响）
+  function fmtCredit(v) {
+    return (Number(v) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
 
   function fmtDate(d) {
     const y = d.getFullYear();
@@ -1742,7 +1786,7 @@
   }
 
   // ---------- 消耗明细（请求级，口径 A） ----------
-  const reqState = { data: [], filter: '' };
+  const reqState = { data: [], filter: '', onlyPromptToday: false };
   function renderRequests(D) {
     const { rows, meta } = buildRequests(D);
     reqState.data = rows;
@@ -1778,13 +1822,21 @@
     document.getElementById('req-breakdown').innerHTML = [
       { title: '按模型', list: mb }, { title: '按客户端', list: cb }, { title: '按用途', list: pb },
     ].map(function (g) {
-      if (!g.list.length) return '<div><div class="bk-sub" style="font-weight:600;color:var(--title);margin-bottom:8px">' + g.title + '</div><div class="bk-sub">暂无数据</div></div>';
-      const max = g.list[0].credit || 1;
-      return '<div><div class="bk-sub" style="font-weight:600;color:var(--title);margin-bottom:8px">' + g.title + '</div>' +
-        g.list.slice(0, 5).map(function (x) {
-          return '<div class="bk-row"><span class="bk-name" title="' + (x.name || '') + '">' + (x.name || '-') + '</span>' +
-                 '<span class="bk-val">' + x.credit.toFixed(2) + '<span class="bk-sub"> · ' + x.count + ' 次</span></span>' +
-                 '<span class="bk-track"><span class="bk-fill" style="width:' + Math.max(2, (x.credit / max) * 100).toFixed(1) + '%"></span></span></div>';
+      const n = g.list.length;
+      const head = '<div class="bk-hd"><span class="bk-hd-t">' + g.title + '</span>' +
+        '<span class="bk-hd-m">' + (n > 5 ? '前 5 / 共 ' + n + ' 项' : '共 ' + n + ' 项') + '</span></div>';
+      if (!n) return '<div class="bk-col">' + head + '<div class="bk-sub" style="padding:4px 7px">暂无数据</div></div>';
+      // 条长按该维度「全量」求和折算，表达的是真实份额；不取相对第一名的相对值
+      const total = g.list.reduce(function (s, x) { return s + (x.credit || 0); }, 0) || 1;
+      return '<div class="bk-col">' + head +
+        '<div class="bk-cols"><span>名称</span><span>积分</span><span>次数</span></div>' +
+        g.list.slice(0, 5).map(function (x, i) {
+          const pct = Math.max(0.6, ((x.credit || 0) / total) * 100);
+          return '<div class="bk-row' + (i === 0 ? ' is-top' : '') + '" style="--w:' + pct.toFixed(1) + '%">' +
+                 '<span class="bk-name" title="' + (x.name || '') + '">' + (x.name || '-') + '</span>' +
+                 '<span class="bk-val">' + fmtCredit(x.credit) + '</span>' +
+                 '<span class="bk-cnt">' + (x.count || 0).toLocaleString('en-US') + '</span>' +
+                 '</div>';
         }).join('') + '</div>';
     }).join('');
 
@@ -1801,6 +1853,10 @@
   }
 
   function reqFilterFn(r) {
+    // 「仅看今日实时提示词」：提示词只在服务端实时响应与本地会话库里存在，
+    // 历史行 has_input=false 本就取不到提示词，勾上后应直接剔除；
+    // 再用「今天」收一道口 —— 能读到提示词的都是近期会话，跨天的长尾没有意义。
+    if (reqState.onlyPromptToday && (!r.has_input || (r.time || '').slice(0, 10) !== todayStr())) return false;
     const q = (reqState.filter || '').toLowerCase();
     if (!q) return true;
     return ((r.model || '') + ' ' + (r.client || '') + ' ' + (r.agent_purpose || '') + ' ' + (r.session_title || '')).toLowerCase().includes(q);
@@ -1820,7 +1876,10 @@
                '<td>' + (r.agent_purpose || '-') + '</td>' +
                '<td class="prompt-cell">' + prompt + '</td>' +
                '<td class="num">' + (r.credit != null ? r.credit.toFixed(2) : '-') + '</td></tr>';
-      }).join('') || '<tr><td colspan="6" class="empty">暂无请求级流水（服务端接口不可用或窗口内无记录）</td></tr>';
+      }).join('') || '<tr><td colspan="6" class="empty">' +
+        (reqState.onlyPromptToday
+          ? '今日暂无带实时提示词的请求 —— 提示词只在实时响应中存在，历史行不可回溯；取消勾选可看全部流水'
+          : '暂无请求级流水（服务端接口不可用或窗口内无记录）') + '</td></tr>';
     });
   }
 
@@ -2517,6 +2576,11 @@
   // 消耗明细：搜索 / 导出
   document.getElementById('req-search').addEventListener('input', function () {
     reqState.filter = this.value || '';
+    renderReqTable();
+  });
+  // 「仅看今日实时提示词」：勾选状态存 reqState，DATA 重渲染后仍然生效
+  document.getElementById('req-only-prompt').addEventListener('change', function () {
+    reqState.onlyPromptToday = !!this.checked;
     renderReqTable();
   });
   document.getElementById('export-requests').addEventListener('click', function () {
