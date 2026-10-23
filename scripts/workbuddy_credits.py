@@ -277,6 +277,10 @@ def health_status():
         "last_err_at": err_at,
         "last_err": (_HEALTH["last_err"] or "")[:200],
         "degraded": degraded,
+        # L1 本地会话库读取实况：排查「面板空着」时先看这里，别猜
+        "l1": dict(_L1_DIAG),
+        # 本地数据文件（快照 / 到账事件 / 签到历史）读取实况：error 非空即文件损坏
+        "files": {k: dict(v) for k, v in _FILE_DIAG.items()},
     }
 
 
@@ -1423,6 +1427,31 @@ def sources_health(l5_meta, l6_meta, reconcile_result, l2_sample_points=0, check
         out["l4"] = {"status": "ok" if checkin_ok else "degraded",
                      "label": "今日已签" if checkin_ok else "今日未签",
                      "detail": "签到数据为本地独立来源，不受服务端接口变动影响"}
+
+    # L1 本地会话库（workbuddy.db / session_usage）：「最近会话消耗」面板的唯一来源。
+    # 早先读失败被静默返回 []，前端只能显示「所选范围内暂无会话记录」——
+    # 用户看到的是「你没用量」，实情往往是「没读到」。这里必须把两者分开。
+    d = _L1_DIAG
+    if not d.get("path"):
+        out["l1"] = {"status": "missing", "label": "未读取",
+                     "detail": "本次构建未读取本地会话库"}
+    elif not d.get("exists"):
+        out["l1"] = {"status": "missing", "label": "无本地库",
+                     "detail": "找不到 %s —— 客户端可能尚未创建会话库" % d.get("path")}
+    elif d.get("sql_error"):
+        out["l1"] = {"status": "missing", "label": "读取失败",
+                     "detail": "本地会话库打不开（%s）—— 面板空着不代表没有消耗"
+                               % str(d.get("sql_error"))[:120]}
+    elif not d.get("rows"):
+        out["l1"] = {"status": "degraded", "label": "空库",
+                     "detail": "本地会话库可读，但 session_usage 尚无记录"}
+    else:
+        note = ""
+        if d.get("open_mode") == "ro_immutable":
+            # 只读快照模式：完全绕开 -shm，代价是可能漏掉尚未 checkpoint 的写入
+            note = "；只读快照模式（可能少最近几条未落盘的会话）"
+        out["l1"] = {"status": "ok", "label": "正常",
+                     "detail": "本地会话库 %d 条%s" % (d.get("rows"), note)}
     return out
 
 
@@ -1452,24 +1481,42 @@ def record_snapshot(packages, checkin=None):
 
 
 def load_snapshots():
-    if not os.path.exists(SNAPSHOT_FILE):
+    diag = {"path": SNAPSHOT_FILE, "exists": os.path.exists(SNAPSHOT_FILE),
+            "lines": 0, "bad_lines": 0, "error": ""}
+    _FILE_DIAG["snapshots.jsonl"] = diag
+    if not diag["exists"]:
         return []
     snaps = []
-    with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                snaps.append(json.loads(line))
-            except Exception:
-                continue
+    try:
+        with open(SNAPSHOT_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    snaps.append(json.loads(line))
+                except Exception:
+                    # 坏行计数：快照是逐行追加的，进程被杀时最后一行常被截断。
+                    # 静默跳过会让时间轴凭空少一段，必须留下证据。
+                    diag["bad_lines"] += 1
+                    continue
+    except Exception as e:
+        diag["error"] = "%s: %s" % (type(e).__name__, e)
+        return []
+    diag["lines"] = len(snaps)
     return snaps
 
 
 # ---------- 本地消耗明细（workbuddy.db / session_usage） ----------
 def _usage_db_path():
     return os.path.join(os.path.expanduser("~"), ".workbuddy", "workbuddy.db")
+
+
+# L1 读取诊断：空列表有**三种完全不同的含义**（库不存在 / 库不可读 / 库里确实没有行），
+# 早先一律返回 [] 并被前端渲染成「所选范围内暂无会话记录」—— 把「读不到」伪装成
+# 「没有数据」，用户只能看到一张空表，无从判断是自己没用量还是功能坏了。
+# 这里记录最后一次读取的真实情况，由 /api/health 与 sources_health 对外暴露。
+_L1_DIAG = {"path": "", "exists": False, "rows": 0, "sql_error": "", "checked_at": 0}
 
 
 def load_usage():
@@ -1482,22 +1529,50 @@ def load_usage():
     覆盖最近约 17 天（本地库仅保留近期会话，会被客户端滚动清理）。返回空列表表示无数据或库不可读。
     """
     db = _usage_db_path()
+    _L1_DIAG.update({"path": db, "exists": os.path.exists(db),
+                     "rows": 0, "sql_error": "", "open_mode": "",
+                     "checked_at": int(time.time())})
     if not os.path.exists(db):
         return []
-    try:
-        con = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
-        cur = con.cursor()
-        cur.execute(
-            "SELECT su.session_id, su.updated_at, su.credit_json, "
-            "s.title, s.model "
-            "FROM session_usage su "
-            "LEFT JOIN sessions s ON s.id = su.session_id "
-            "ORDER BY su.updated_at ASC"
-        )
-        rows = cur.fetchall()
-        con.close()
-    except Exception:
+
+    # 打开策略逐级回退（2026-10-23 实修）：
+    # 库是 WAL 模式，`mode=ro` 仍需要能写 `-shm`。若进程对 `~/.workbuddy` 目录没有
+    # 写权限（或被沙箱/安全软件拦），SQLite 直接抛 `unable to open database file` ——
+    # 明明文件可读、stat 也成功，却一条都读不出来。
+    #  ① ro              主路径，最准确（能看到 WAL 里尚未 checkpoint 的最新写入）
+    #  ② ro&immutable=1  只读快照：完全不碰 -shm/-wal，代价是可能漏掉最近未合并的写入
+    #  ③ 普通连接        最后一搏（不带 mode，走默认读写语义）
+    uri_forms = [
+        ("ro", "file:" + db.replace("\\", "/") + "?mode=ro", True),
+        ("ro_immutable", "file:" + db.replace("\\", "/") + "?mode=ro&immutable=1", True),
+        ("plain", db, False),
+    ]
+    rows = None
+    errs = []
+    for mode_name, target, uri in uri_forms:
+        try:
+            con = sqlite3.connect(target, uri=uri, timeout=5)
+            cur = con.cursor()
+            cur.execute(
+                "SELECT su.session_id, su.updated_at, su.credit_json, "
+                "s.title, s.model "
+                "FROM session_usage su "
+                "LEFT JOIN sessions s ON s.id = su.session_id "
+                "ORDER BY su.updated_at ASC"
+            )
+            rows = cur.fetchall()
+            con.close()
+            _L1_DIAG["open_mode"] = mode_name
+            break
+        except Exception as e:
+            # 不再静默吞掉：库被客户端写锁、schema 变更、权限不足都会落到这里，
+            # 而这几种情况的修法完全不同 —— 必须让上层看得见原因。
+            errs.append("%s→%s: %s" % (mode_name, type(e).__name__, e))
+    if rows is None:
+        _L1_DIAG["sql_error"] = " | ".join(errs)
         return []
+
+    _L1_DIAG["rows"] = len(rows)
 
     usage = []
     for sid, upd, cj, title, model in rows:
@@ -1568,13 +1643,27 @@ def usage_heatmap(usage):
 
 
 # ---------- 自积累账本 ----------
+# 本地数据文件的读取实况（快照 / 到账事件 / 签到历史）。
+# 与 L1 同一类陷阱：这些文件解析失败时会被 `except: pass` 静默跳过，
+# 页面上表现为「这段时间没有数据」—— 而真实原因是文件坏了或读不到。
+# 这里把最后一次读取的真实情况记下来，由 /api/health 的 files 段对外暴露。
+_FILE_DIAG = {}
+
+
 def _load_json(path, default):
+    key = os.path.basename(path)
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+                data = json.load(f)
+            _FILE_DIAG[key] = {"path": path, "exists": True, "error": ""}
+            return data
+        except Exception as e:
+            # 不再静默吞掉：坏文件返回默认值，但必须留下证据
+            _FILE_DIAG[key] = {"path": path, "exists": True,
+                               "error": "%s: %s" % (type(e).__name__, e)}
+            return default
+    _FILE_DIAG[key] = {"path": path, "exists": False, "error": ""}
     return default
 
 
@@ -2192,10 +2281,13 @@ _PANEL_KEYS = {
         "today_used", "today_used_l5", "today_used_l2",
         "sources_health",
     ),
-    # 包生命周期：两张大表 + 权威浪费（回带「已过期损失」KPI 卡）
+    # 积分批次与生命周期：待用清单（L3 批次）+ 两张 L6 大表 + 权威浪费
+    # expiry_list / holidays：面板已合并，待用清单页签的数据与假期标记必须随该面板一起来，
+    # 否则面板先到、概览后到时「待用清单」会空着（早期就踩过这种跨面板依赖）。
     "lifecycle": (
         "version", "generated_at",
         "packages_lifecycle", "waste_authoritative",
+        "expiry_list", "holidays", "holiday_meta",
         "sources_health",
     ),
 }
@@ -2205,7 +2297,8 @@ _PANEL_KEYS = {
 PANEL_FRESH_KEYS = {
     "overview": ("resource", "checkin"),
     "requests": ("l5",),
-    "lifecycle": ("l6",),
+    # 该面板现在同时展示「待用清单（L3）」与两张 L6 表 —— 刷新它要两个源一起取
+    "lifecycle": ("l6", "resource"),
 }
 
 
@@ -2283,6 +2376,26 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     l6_valid = parse_pkg_lifecycle((l6_lists or {}).get("valid"), "valid")
     l6_expired = parse_pkg_lifecycle((l6_lists or {}).get("expired"), "expired")
     waste_auth = compute_waste_authoritative(l6_expired)
+
+    # 权威浪费的**可信度戳**（2026-10-23 补）：
+    # compute_waste_authoritative([]) 返回的是一个「字段齐全但全零」的对象。
+    # 前端拿它渲染 KPI，就会把「包明细接口没读到」显示成
+    # 「已过期损失 0.00 · 已过期未用完 0 批 · 服务端权威」—— 比空表更糟：
+    # 它带着权威的口吻给出了一个假的零。数字本身分不出「真为零」还是「没算」，
+    # 所以必须在这里显式标注这一份统计到底有没有算过。
+    _emeta = (l6_meta.get("expired") or {}) if isinstance(l6_meta, dict) else {}
+    _expired_ok = (bool(_emeta) and _emeta.get("shown") is not None
+                   and not (_emeta.get("partial_errors") or []))
+    waste_auth["degraded"] = not _expired_ok
+    if _expired_ok:
+        waste_auth["error"] = ""
+    else:
+        _werrs = list(_emeta.get("partial_errors") or []) \
+                 + list(((l6_meta or {}).get("partial_errors") or []))
+        if l6_err:
+            _werrs.append(l6_err)
+        waste_auth["error"] = ("；".join(str(e)[:120] for e in _werrs)
+                               or "包明细接口未返回「已过期」清单")
 
     # 到期批次（含已过期，按到期时间排序）
     ordered = sorted(packages, key=lambda x: (x["cycle_end"] == "", x["cycle_end"] or ""))
