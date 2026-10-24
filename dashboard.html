@@ -216,6 +216,12 @@
   .um-item:disabled { opacity: .5; cursor: default; }
   .um-item:disabled:hover { background: transparent; color: var(--text); }
   .um-item:disabled:hover .um-ico { opacity: .55; color: inherit; }
+  /* 「自动签到」菜单项上的状态标签：开着时一眼可见，
+     不必点进弹窗才知道（否则又是一个"开关藏在设置里、状态看不见"） */
+  .um-badge { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 5px;
+    font-size: 10.5px; line-height: 15px; font-weight: 700;
+    background: rgba(52, 211, 153, .16); color: var(--green); vertical-align: 1px; }
+  .um-badge[hidden] { display: none; }
   .um-foot {
     margin-top: 6px; padding: 9px 12px 5px; border-top: 1px solid var(--border);
     font-size: 10.5px; color: var(--muted);
@@ -316,11 +322,28 @@
   .panel h2 { font-size: 15px; font-weight: 600; color: var(--title); letter-spacing: .02em; }
   .chart { width: 100%; height: 300px; }
   .chart-tall { width: 100%; height: 420px; }
-  .chart-cal { width: 100%; height: 320px; }
-  .cal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .cal-cell { min-width: 0; }
-  .cal-title { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
-  @media (max-width: 720px) { .cal-grid { grid-template-columns: 1fr; } }
+  .chart-cal { width: 100%; height: 190px; }
+  /* 两张日历并排：宽度对半分给两条点阵，竖向分隔线让它们各成一块而不是一张图被劈开。
+     两张的内边距必须严格相等，否则列宽不同、同一周就对不齐。 */
+  .cal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+  .cal-cell { min-width: 0; padding: 0 18px; }
+  .cal-cell:first-child { padding-left: 0; }
+  /* 用 inset 阴影而非 border 画分隔线：border 会吃掉 1px 宽度，两张图的内宽就不等了，
+     点阵列宽会差出 1px，同一周对不齐。 */
+  .cal-cell:last-child { padding-right: 0; box-shadow: inset 1px 0 0 rgba(255, 255, 255, .07); }
+  /* 日历标题：左侧色标与该张日历的色相一致，两张图身份一眼可分 */
+  .cal-title {
+    display: flex; align-items: center; margin-bottom: 8px;
+    font-size: 12px; font-weight: 600; color: var(--text);
+  }
+  .cal-title::before { content: ''; width: 6px; height: 6px; border-radius: 2px; margin-right: 7px; }
+  .cal-exp .cal-title::before { background: var(--primary); box-shadow: 0 0 7px rgba(34, 211, 238, .55); }
+  .cal-inc .cal-title::before { background: var(--green); box-shadow: 0 0 7px rgba(52, 211, 153, .55); }
+  @media (max-width: 720px) {
+    .cal-grid { grid-template-columns: 1fr; }
+    .cal-cell { padding: 0; }
+    .cal-cell:last-child { box-shadow: inset 0 1px 0 var(--border-strong); margin-top: 14px; padding-top: 14px; }
+  }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
 
@@ -401,6 +424,7 @@
               color: var(--title); font-size: 12.5px; line-height: 1.65;
               box-shadow: var(--shadow-2); animation: toastIn .22s var(--ease-out); }
   .wb-toast.warn { border-color: rgba(251, 191, 36, .45); }
+  .wb-toast.bad { border-color: rgba(248, 113, 113, .45); }
   .wb-toast b { color: var(--primary); }
   .wb-toast.warn b { color: var(--amber); }
   @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -460,16 +484,90 @@
   .expiry-modal .expiry-rows { margin: 10px 0 14px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
   .expiry-modal .expiry-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 12px; font-size: 12.5px; border-bottom: 1px solid var(--border); }
   .expiry-modal .expiry-row:last-child { border-bottom: none; }
-  .expiry-modal .expiry-row .lbl { color: var(--text); }
-  .expiry-modal .expiry-row .val { color: var(--title); font-weight: 600; }
+  .expiry-modal .expiry-row .lbl { color: var(--text); flex: 0 0 auto; padding-right: 10px; }
+  .expiry-modal .expiry-row .val { color: var(--title); font-weight: 600;
+    flex: 1 1 auto; min-width: 0; text-align: right; word-break: break-word; line-height: 1.5; }
   .expiry-modal .expiry-row .val.red { color: var(--red); }
   .expiry-modal .expiry-actions { display: flex; gap: 10px; justify-content: flex-end; }
   .expiry-modal .expiry-actions .btn { font-size: 13px; }
+  /* 失败/未知态的说明块：必须和正文分开读，否则一大段黄字跟说明文字糊在一起 */
+  .ac-warn { margin: 2px 0 10px; padding: 9px 11px; border-radius: 8px; font-size: 11.5px;
+    line-height: 1.65; color: #FCD34D; background: rgba(251, 191, 36, .09);
+    border-left: 2px solid rgba(251, 191, 36, .55); }
+  .ac-warn .ac-raw { display: block; margin-top: 4px; color: var(--muted); font-size: 11px;
+    line-height: 1.5; word-break: break-word; }
+  .ac-warn.bad { color: #FCA5A5; background: rgba(248, 113, 113, .09);
+    border-left-color: rgba(248, 113, 113, .55); }
+
+  /* ---------- 通用提示框（替代原生 alert / confirm） ---------- */
+  .expiry-modal.ui-dlg { max-width: 460px; width: auto; min-width: 340px; }
+  /* 弹窗会自动聚焦主按钮（键盘/读屏可达）；默认 outline 太重，换成柔和光圈 */
+  .ui-dlg .btn:focus { outline: none; }
+  .ui-dlg .btn:focus-visible, .ui-dlg .btn:focus {
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, .22); }
+  .ui-dlg .dlg-ic { width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; font-size: 13.5px;
+    display: inline-flex; align-items: center; justify-content: center; font-weight: 700; }
+  .ui-dlg .dlg-ic.ok   { background: rgba(52, 211, 153, .14); color: var(--green); }
+  .ui-dlg .dlg-ic.warn { background: rgba(251, 191, 36, .14); color: var(--amber); }
+  .ui-dlg .dlg-ic.bad  { background: rgba(248, 113, 113, .14); color: var(--red); }
+  .ui-dlg .dlg-ic.info { background: rgba(148, 163, 184, .16); color: var(--primary); }
+  .ui-dlg .dlg-ic svg { width: 15px; height: 15px; display: block; }
+  .ui-dlg .dlg-msg { white-space: pre-line; }      /* message 里的换行原样保留 */
+  .ui-dlg .dlg-hint { margin-top: 11px; padding: 9px 11px; border-radius: 8px; white-space: pre-line;
+    font-size: 11.5px; line-height: 1.7; color: var(--muted);
+    background: rgba(148, 163, 184, .07); border-left: 2px solid var(--border-strong); }
+  .ui-dlg code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11.5px;
+    padding: 1px 5px; border-radius: 4px; color: var(--title); background: rgba(148, 163, 184, .14); }
+  .btn.danger { border-color: rgba(248, 113, 113, .45); color: var(--red); }
+  .btn.danger:hover { background: rgba(248, 113, 113, .12); border-color: var(--red); color: var(--red); }
+  .wb-toast.ok { border-color: rgba(52, 211, 153, .45); }
+  .wb-toast.ok b { color: var(--green); }
+
+  /* ---------- 到期清单：卡片式（原来两列挤一行，到期时刻和分数黏在一起读不动） ---------- */
+  .exp-list { display: flex; flex-direction: column; gap: 8px; margin: 13px 0 15px;
+    max-height: 272px; overflow-y: auto; padding-right: 3px; scrollbar-width: thin; }
+  .exp-list::-webkit-scrollbar { width: 6px; }
+  .exp-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  .exp-item { display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 11px 14px; border-radius: 10px; border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong); background: rgba(148, 163, 184, .05); }
+  .exp-item.soon { border-left-color: var(--amber); background: rgba(251, 191, 36, .055); }
+  .exp-item.urgent { border-left-color: var(--red); background: rgba(248, 113, 113, .07); }
+  .exp-item .exp-name { font-size: 13px; font-weight: 600; color: var(--title); line-height: 1.4; }
+  .exp-item .exp-when { margin-top: 3px; font-size: 11.5px; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .exp-item .exp-badge { display: inline-block; margin-right: 7px; padding: 1px 6px; border-radius: 4px;
+    font-size: 10.5px; font-weight: 600; vertical-align: 1px;
+    background: rgba(148, 163, 184, .16); color: var(--muted); }
+  .exp-item.soon .exp-badge { background: rgba(251, 191, 36, .18); color: var(--amber); }
+  .exp-item.urgent .exp-badge { background: rgba(248, 113, 113, .18); color: var(--red); }
+  .exp-item .exp-amt { flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }
+  .exp-item .exp-amt b { font-size: 17px; font-weight: 700; color: var(--title); letter-spacing: -.2px; }
+  .exp-item.soon .exp-amt b { color: var(--amber); }
+  .exp-item.urgent .exp-amt b { color: var(--red); }
+  .exp-item .exp-amt span { display: block; margin-top: 1px; font-size: 10.5px; color: var(--muted); }
 
   /* ---------- 提醒设置：上班日选择 ---------- */
   .expiry-modal .set-label { font-size: 12.5px; color: var(--text); display: block; margin-bottom: 6px; }
   .expiry-modal .set-block { margin: 12px 0 16px; }
   .expiry-modal .set-note { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+  /* 自动签到开关（原生 checkbox + 自绘轨道）：不用自定义组件，
+     键盘可达 / 读屏可读都跟着原生 checkbox 走 */
+  .ac-toggle { position: relative; display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+  /* 原生 checkbox 铺满整行（视觉隐藏但保持真实尺寸）：
+     垫成 0×0 会让键盘焦点环无处可画，也会让自动化测试判为「不可见」——
+     这类"视觉隐藏控件"必须在布局里占位，不能只靠 opacity: 0。 */
+  .ac-toggle input { position: absolute; inset: 0; width: 100%; height: 100%;
+    opacity: 0; margin: 0; cursor: pointer; }
+  .ac-toggle .ac-track { position: relative; width: 38px; height: 21px; border-radius: 999px;
+    background: var(--border-strong); transition: background .16s; flex-shrink: 0; }
+  .ac-toggle .ac-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 15px; height: 15px;
+    border-radius: 50%; background: #fff; transition: transform .16s; }
+  .ac-toggle input:checked + .ac-track { background: var(--green); }
+  .ac-toggle input:checked + .ac-track::after { transform: translateX(17px); }
+  .ac-toggle input:focus-visible + .ac-track { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .ac-toggle .ac-state { font-size: 13px; color: var(--title); font-weight: 600; }
+  .ac-toggle.is-off .ac-track { background: var(--border-strong); }
 
   /* ---------- 批次明细弹窗（点表行看单批全部字段）---------- */
   /* 复用 .expiry-mask 的遮罩（fixed + 居中 + 模糊），只换里面的卡片宽度与排版 */
@@ -632,15 +730,40 @@
   .notice.info .nt-btn { border-color: rgba(34, 211, 238, .45); color: var(--primary); }
   .notice.info .nt-btn:hover { background: rgba(34, 211, 238, .14); }
 
-  /* 面板加载态：未出数据前给一块轻量骨架，避免"黑屏像坏了" */
+  /* 面板加载态：未出数据前给一块轻量骨架，避免"黑屏像坏了"。
+     但灰线只说明"马上有内容"，不说明"在等什么、还要等多久" ——
+     请求级流水要几秒才回来（最近 31 天逐条调用），那几秒里用户
+     分不清是卡住了还是在干活，只能干等。所以补一行说明。 */
   .panel-skeleton { padding: 26px 0; text-align: center; color: var(--muted); font-size: 12.5px; }
+  /* 说明行直接显示，不做"延迟淡入"。
+     原本想用 animation-delay 让快速加载时不出这句提示，但动画时钟在页面繁忙期
+     会滞后（实测骨架已存在 600ms，动画 currentTime 才走到 200ms）；
+     一旦它卡住，opacity:0 就是"永远看不见"—— 一段用来安抚等待的文字，
+     不该把可见性押在动画上。快速加载时它跟着骨架一闪而过，本来也没人注意。 */
+  .panel-skeleton .sk-msg {
+    display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+    gap: 8px; margin-bottom: 15px; color: var(--text); font-size: 12.5px;
+  }
+  .panel-skeleton .sk-dot {
+    width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--primary); box-shadow: 0 0 7px rgba(34, 211, 238, .7);
+    animation: skPulse 1.5s ease-in-out infinite;
+  }
+  @keyframes skPulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+  .panel-skeleton .sk-sub { color: var(--muted); font-size: 11.5px; }
+  .panel-skeleton .sk-elapsed {
+    color: var(--muted); font-size: 11.5px;
+    font-family: var(--mono); font-variant-numeric: tabular-nums;
+  }
+  .panel-skeleton .sk-elapsed:empty { display: none; }   /* 没到报秒的时长就别留空位 */
   .panel-skeleton .sk-line {
     height: 10px; margin: 8px auto; border-radius: 6px; max-width: 520px;
     background: linear-gradient(90deg, rgba(148, 163, 184, .10) 25%, rgba(148, 163, 184, .22) 37%, rgba(148, 163, 184, .10) 63%);
     background-size: 400% 100%; animation: sk 1.3s ease infinite;
   }
-  .panel-skeleton .sk-line:nth-child(2) { width: 78%; }
-  .panel-skeleton .sk-line:nth-child(3) { width: 62%; }
+  /* 用类名而不是 nth-child 标宽度：上面插了说明行之后，nth-child 的序号会整体后移 */
+  .panel-skeleton .sk-line.w2 { width: 78%; }
+  .panel-skeleton .sk-line.w3 { width: 62%; }
   @keyframes sk { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
   .panel-err {
     padding: 18px; margin-bottom: 14px; border-radius: 10px; font-size: 12.5px;
@@ -659,46 +782,78 @@
   .tabs button:not(.active):hover { color: var(--primary); }
 
   /* ---------- 构成明细（模型 / 客户端 / 用途） ----------
-     三列同构小表：名称左对齐，积分与次数各占一条定宽右对齐列，
-     占比不再画成行下方的细条（5 行散成 5 根断条、行高忽大忽小），
-     改为整行背景条 —— 不占纵向空间，行距统一，比例仍一眼可比。 */
-  .bk-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(272px, 1fr)); gap: 0; }
-  .bk-col { min-width: 0; padding: 0 18px; border-left: 1px solid var(--border-strong); }
-  .bk-col:first-child { padding-left: 0; border-left: none; }
+     三组竖向堆叠，每组占满整行。为什么不再并排：
+     ① 三列的「合计」其实是同一个数（同一批消耗的三种切法），并排放着会让人
+        误以为 48% / 94% / 84% 之间可以横向比较 —— 那是被制造出来的可比性；
+     ② 并排时每组只有 340px，48% 的条 163px、5.3% 的条 18px，量级差被压没了；
+     ③ 并排必然截断名称，而「按用途」的名字恰恰最长、最需要读全。
+     竖排后条长变成三倍，读法是标准条形图：名称 | 条 | 积分 | 占比 一条水平线。 */
+  .bk-grid { display: block; }
+  .bk-col { min-width: 0; padding-top: 16px; border-top: 1px solid var(--border-strong); }
+  .bk-col:first-child { padding-top: 0; border-top: none; }
   .bk-hd {
-    display: flex; align-items: baseline; gap: 8px;
-    padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 0 7px 7px; margin-bottom: 2px; border-bottom: 1px solid var(--border);
   }
-  .bk-hd-t { font-size: 12.5px; font-weight: 600; color: var(--title); }
-  .bk-hd-m { margin-left: auto; font-size: 10.5px; color: var(--muted); }
-  .bk-cols, .bk-row { display: grid; grid-template-columns: minmax(0, 1fr) 74px 34px; gap: 10px; }
+  .bk-hd-t { font-size: 13px; font-weight: 600; color: var(--title); }
+  .bk-hd-m {
+    margin-left: auto; min-width: 0; flex-shrink: 1;
+    font-size: 10.5px; color: var(--muted); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .bk-cols, .bk-row {
+    display: grid;
+    /* 名称列定宽而不是自适应：起点统一，五根条才能共用一个零点。
+       宽度按最长的那条名称给（context_summary_pre_message ≈ 190px），
+       再宽就只是把名称和条推得更远，读起来反而更累。 */
+    grid-template-columns: 190px minmax(0, 1fr) 100px 66px;
+    gap: 14px;
+  }
   .bk-cols {
     padding: 2px 7px 4px; font-size: 10.5px; color: var(--muted);
     letter-spacing: .4px;
   }
-  .bk-cols span:nth-child(2), .bk-cols span:nth-child(3) { text-align: right; }
+  .bk-cols span:nth-child(3), .bk-cols span:nth-child(4) { text-align: right; }
   .bk-row {
-    align-items: center; padding: 3px 7px; border-radius: 5px;
-    font-size: 12.5px; line-height: 1.55;
-    background-image: linear-gradient(90deg,
-      rgba(34, 211, 238, .16) 0,
-      rgba(34, 211, 238, .16) calc(var(--w, 0%) - 1px),
-      transparent var(--w, 0%));
+    align-items: center; padding: 3px 7px; border-radius: 6px;
+    font-size: 12.5px; line-height: 1.35;
   }
   .bk-row:hover { background-color: rgba(148, 163, 184, .07); }
-  .bk-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 条是独立的一列，不再是行底的下划线：竖排后横向空间够用，
+     名称—条—积分—占比落在同一条水平线上，视线不用上下找对应关系。
+     轨道压到接近背景等于没有轨道，94% 的条就会被误读成一条分隔线。 */
+  .bk-bar {
+    position: relative; min-width: 0; height: 8px; border-radius: 4px;
+    background: rgba(148, 163, 184, .16);
+  }
+  .bk-bar > i {
+    display: block; height: 100%; border-radius: 4px; min-width: 2px;
+    width: calc(var(--w, 0) * 100%);
+    /* 名次越靠后越淡：层级由明度表达，不用再堆字号和颜色变体 */
+    opacity: var(--o, 1);
+    background-image: linear-gradient(90deg, rgba(14, 116, 144, .95), rgba(34, 211, 238, .95));
+  }
+  .bk-row:hover .bk-bar { background: rgba(148, 163, 184, .28); }
+  /* 第一名：条更亮、数值更大、占比用主色 —— 构成区要能一眼读出「谁在垄断」 */
+  .bk-name { display: block; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bk-row.is-top .bk-name { color: var(--title); font-weight: 500; }
+  .bk-row.is-top .bk-bar { height: 10px; border-radius: 5px; }
+  .bk-row.is-top .bk-bar > i {
+    background-image: linear-gradient(90deg, #0E7490, #6FE3F5);
+    box-shadow: 0 0 8px rgba(34, 211, 238, .45);
+  }
   .bk-val {
     text-align: right; color: var(--title); font-weight: 600;
     font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.2px;
   }
-  .bk-cnt {
-    text-align: right; color: #8794A6; font-size: 12px;
+  .bk-pct {
+    text-align: right; color: var(--muted); font-size: 11.5px;
     font-family: var(--mono); font-variant-numeric: tabular-nums;
   }
-  .bk-row.is-top .bk-name { color: var(--title); font-weight: 500; }
-  @media (max-width: 900px) {
-    .bk-col { padding: 0; border-left: none; }
-    .bk-grid { gap: 18px; }
+  .bk-row.is-top .bk-val { font-size: 14.5px; color: #FFFFFF; }
+  .bk-row.is-top .bk-pct { color: var(--primary); font-weight: 700; font-size: 12.5px; }
+  @media (max-width: 720px) {
+    .bk-cols, .bk-row { grid-template-columns: minmax(80px, 120px) minmax(0, 1fr) 78px 56px; gap: 8px; }
   }
   .bk-sub { font-size: 11px; color: var(--muted); }
 
@@ -713,11 +868,33 @@
   .rc-bar.degraded { background: rgba(251, 191, 36, .09); border-color: rgba(251, 191, 36, .30); color: #FCD34D; }
   .rc-bar.missing { background: rgba(248, 113, 113, .10); border-color: rgba(248, 113, 113, .32); color: #FCA5A5; }
   .rc-bar .rc-t { font-weight: 600; margin-right: 2px; }
+  /* 提示词列：一律单行 + 省略号。
+     多行折行会让每一行的高度随内容长短跳动，15 行的表格读不出「行」，
+     而且长提示词（本地文件路径能到 150+ 字符）会把整列撑到三四行高。
+     全文交给悬浮气泡 —— 单行截断只是"收起"，不是"丢失"。 */
   .prompt-cell { max-width: 380px; }
   .prompt-text {
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    overflow: hidden; font-size: 12.5px; color: var(--text); line-height: 1.5;
+    display: block; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12.5px; color: var(--text); line-height: 1.5;
   }
+  .prompt-text.is-path { color: #8B97A8; font-family: var(--mono); font-size: 12px; }
+
+  /* 悬浮全文气泡：原生 title 对 150 字符的路径会拉成一整行横跨屏幕，
+     且不支持换行 —— 这里改成有宽度上限、按原样折行的自绘气泡 */
+  .prompt-tip {
+    position: fixed; z-index: 9999; max-width: min(560px, 72vw);
+    padding: 10px 13px; border-radius: 9px;
+    /* 比卡片再亮一档 + 双层阴影：气泡压在表格上时要能"浮"起来，
+       与卡片同色会糊成一块，看不出边界 */
+    background: #1A212B; border: 1px solid rgba(148, 163, 184, .30);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, .68), 0 0 0 1px rgba(0, 0, 0, .45);
+    font-size: 12.5px; line-height: 1.62; color: var(--text);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    pointer-events: none; opacity: 0;
+    transition: opacity .12s ease;
+  }
+  .prompt-tip.on { opacity: 1; }
 </style>
 </head>
 <body data-page-node-id="5o6Cghl1HZr0pBEhr9ABQ3">
@@ -745,6 +922,10 @@
         <button class="um-item" id="alert-settings" role="menuitem">
           <svg class="um-ico" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.2 6.6a4.2 4.2 0 1 0-8.4 0c0 3.3-1.1 4.2-1.1 4.2h10.6s-1.1-.9-1.1-4.2"/><path d="M6.5 13.1a1.75 1.75 0 0 0 3 0"/></svg>
           <span class="um-t">提醒设置</span>
+        </button>
+        <button class="um-item" id="auto-checkin" role="menuitem" title="每天定时签到，不需要打开工作台">
+          <svg class="um-ico" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8.6" r="5.4"/><path d="M8 5.7v3l2 1.2"/><path d="M5.2 1.9 6.6 3.3"/><path d="M10.8 1.9 9.4 3.3"/></svg>
+          <span class="um-t">自动签到<span class="um-badge" id="ac-menu-badge" hidden>开</span></span>
         </button>
         <button class="um-item" id="update-check-btn" role="menuitem" title="主动联网检查是否有新版本">
           <svg class="um-ico" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.4 7.4a5.5 5.5 0 1 1-1.7-3.3"/><path d="M13.6 1.6v3.1h-3.1"/></svg>
@@ -775,7 +956,7 @@
       </div>
       <span class="tb-divider" data-page-node-id="72nt4UgIc1UKTUbspxaQjQ"></span>
       <div class="tb-group" data-page-node-id="zNOlnRq7m7wYOIyJSzjMny">
-        <button class="btn" id="export-batch" title="导出「待用清单」全部批次（含套餐用量）；其余页签用面板内的「导出当前页签」" data-page-node-id="E78tUpIXOuvudm9Z5Nw4kB">导出批次</button>
+        <button class="btn" id="export-batch" title="导出资源接口返回的全部批次（含套餐用量、含已用完）" data-page-node-id="E78tUpIXOuvudm9Z5Nw4kB">导出批次</button>
         <button class="btn" id="export-usage" data-page-node-id="IuE8pyBZQMZsBUog3iuJqj">导出明细</button>
       </div>
       <span class="tb-divider" data-page-node-id="EO02MBK4FZQA1QzoPHXYQe"></span>
@@ -791,9 +972,9 @@
     <a href="#sec-overview" class="active" data-page-node-id="p7gxg5Lr44P0rkPFUjLGZq">数据概览</a>
     <a href="#sec-charts" data-page-node-id="FrmOVAXaRRXeW4GyJnQokS">消耗分析</a>
     <a href="#sec-ledger" data-page-node-id="rWa7M9C8rx1KuF5EBZzAGE">收支账本</a>
-    <a href="#sec-requests" data-page-node-id="Vq0YWzH2Kr8ibTgSxNvP1m">消耗明细</a>
-    <a href="#sec-sessions" data-page-node-id="mi9gFJqVd2mHejEjfj1SVE">会话消耗</a>
     <a href="#sec-lifecycle" data-page-node-id="Rt5mLcX9Uw3oQdJaBk7EzK">积分批次</a>
+    <a href="#sec-sessions" data-page-node-id="mi9gFJqVd2mHejEjfj1SVE">会话消耗</a>
+    <a href="#sec-requests" data-page-node-id="Vq0YWzH2Kr8ibTgSxNvP1m">消耗明细</a>
   </div>
 </div>
 
@@ -851,15 +1032,17 @@
   <!-- 收支日历（按天，GitHub 贡献图风格；显示完整历史范围，不受 7/14 天过滤截断） -->
   <div class="panel" id="sec-heat" data-page-node-id="Yi4bB8aIHjX9qGVkLUk7h3">
     <div class="panel-head" data-page-node-id="q7dqdl88CvkmuqTWF466ZH"><h2 data-icon="heatmap" data-page-node-id="koB5lBIQQdBgBfpWNXzr6S">积分收支日历（按天）</h2></div>
-    <div class="cal-cell" data-page-node-id="8wRUAMduol33Xg20t8WLQ0">
-      <div class="cal-title" data-page-node-id="sBgARdGJXBGC8qVtMVsu0O">消耗</div>
-      <div class="chart-cal" id="chart-heat-expense" data-page-node-id="BEguGXlwV6QxK6S0k4Nkjy"></div>
+    <div class="cal-grid" data-page-node-id="8wRUAMduol33Xg20t8WLQ0">
+      <div class="cal-cell cal-exp" data-page-node-id="sSb4xVQZ1ZU6Hq0h9vXzZc">
+        <div class="cal-title" data-page-node-id="sBgARdGJXBGC8qVtMVsu0O">消耗</div>
+        <div class="chart-cal" id="chart-heat-expense" data-page-node-id="BEguGXlwV6QxK6S0k4Nkjy"></div>
+      </div>
+      <div class="cal-cell cal-inc" data-page-node-id="jiTKVr0DPfAoVib7ZRVskj">
+        <div class="cal-title" data-page-node-id="8e0jolVJ8v4Dj2Wk6foslR">收入</div>
+        <div class="chart-cal" id="chart-heat-income" data-page-node-id="GYai82neJVrNaWbALaU6ZX"></div>
+      </div>
     </div>
-    <div class="cal-cell" style="margin-top:18px;" data-page-node-id="jiTKVr0DPfAoVib7ZRVskj">
-      <div class="cal-title" data-page-node-id="8e0jolVJ8v4Dj2Wk6foslR">收入</div>
-      <div class="chart-cal" id="chart-heat-income" data-page-node-id="GYai82neJVrNaWbALaU6ZX"></div>
-    </div>
-    <div class="hint" data-page-node-id="toghDDl1Df8wrE8FGBuVI1">注：日历显示全部历史范围（不受上方日期筛选影响）。消耗优先取<b>服务端请求级流水</b>（覆盖最近 31 天，精确到每次调用），更早的日期由逐包采样补足；收入 = 签到 + 包到账，按真实到账时间归日。</div>
+    <div class="hint" data-page-node-id="toghDDl1Df8wrE8FGBuVI1">注：不受上方日期筛选影响，显示全部历史，两张图共用同一时间轴、同列即同日。<b>空格 = 当日无记录</b> ——消耗的请求级明细只覆盖最近 31 天（更早由逐包采样补足，可能整段缺失），收入的空格即当日未签到。收入 = 签到 + 包到账，按真实到账时间归日。</div>
   </div>
 
   <!-- 收支账本 -->
@@ -870,6 +1053,55 @@
       <tbody id="ledger-tbody" data-page-node-id="LEOQhFxtdzszVD87m8jnBW"></tbody>
     </table>
     <div class="pager" id="ledger-pager" data-page-node-id="4zBh9miDg1S3pHtrBq9NJ6"></div>
+  </div>
+
+  <!-- 积分批次与生命周期：同一个包池、两种问法
+       待用（还能用的 / 该先烧哪批）· 已结束（烧光或作废的 / 钱怎么没的）
+       早先按数据源切成「待用清单 / 有效期内 / 已过期」三个页签，实测待用 42 行与有效期内 41 行
+       以 (名称, 到期, 总量) 配对完全重合、连排序都一样，唯一差别是 1 个包明细接口不返回的体验版包；
+       而已过期只是有效期内里状态为 2 的那部分 —— 三个页签里有两个半是同一张表。
+       按「数据从哪个接口来」切页签，用户读不出区别；按「还能不能用」切，才问得出两个不同的问题。 -->
+  <div class="panel" id="sec-lifecycle" data-page-node-id="Ub2eIyS4Dw1tViQfAa8GjC">
+    <div class="panel-head" data-page-node-id="Vc3fJzT5Ex2uWjRgBb9HkD">
+      <h2 data-icon="list" data-page-node-id="Wd4gKaU6Fy3vXkShCc1IlE">积分批次与生命周期</h2>
+      <div class="tabs" id="lc-tabs" data-page-node-id="Xe5hLbV7Gz4wYlTiDd2JmF">
+        <button data-lc="pending" class="active" data-page-node-id="Yf6iMcW8Ha5xZmUjEe3KnG">待用</button>
+        <button data-lc="ended" data-page-node-id="Zg7jNdX9Ib6yAnVkFf4LoH">已结束</button>
+      </div>
+    </div>
+    <!-- 数据源徽章：三层视角来自两个接口，边界写在脸上 ——
+         否则「为什么这里有套餐用量、那里没有」永远靠脚注解释。 -->
+    <div class="lc-src" id="lc-src" data-page-node-id="Rf2yUbV7Kd4mQpXnGg6JsB"></div>
+    <div class="cards" id="lc-cards" style="margin-bottom:16px" data-page-node-id="Ah8kOeY1Jc7zBoWlGg5MpI"></div>
+    <div class="filters" style="margin-bottom:14px" data-page-node-id="Bi9lPfZ2Kd8aCpXmHh6NqJ">
+      <input type="text" class="search-input" id="lc-search" placeholder="搜索资源包 / 类型 / 包码" data-page-node-id="Cj1mQgA3Le9bDqYnIi7OrK">
+      <button class="btn" id="export-lifecycle" style="padding:6px 12px;font-size:12.5px;" data-page-node-id="Dk2nRhB4Mf1cErZoJj8PsL">导出当前页签</button>
+    </div>
+    <!-- 「假期内到期」汇总：只在「待用」出现 —— 那是待办，不是回顾 -->
+    <div class="gap-note" id="lc-holiday" style="display:none" data-page-node-id="Fv8zKcP3Nb6qSoWlMm9RtC"></div>
+    <table data-page-node-id="El3oSciC5Ng2dFsApKk9QtM">
+      <thead data-page-node-id="Fm4pIdD6Oh3eGtBqLl0RuN"><tr data-page-node-id="Gn5qJeE7Pi4fHuCrMm1SvO"><th data-page-node-id="Ho6rKfF8Qj5gIvDsNn2TwP">到期时间</th><th data-page-node-id="Ip7sLgG9Rk6hJwEtOo3UxQ">状态</th><th data-page-node-id="Jq8tMhH1Sl7iKxFuPp4VyR">剩余</th><th data-page-node-id="Kr9uNiI2Tm8jLyGvQq5WzS">已用/总量</th><th data-page-node-id="Ls1vOjJ3Un9kMzHwRr6XaT">类型</th><th data-page-node-id="Mt2wPkK4Vo1lNaIxSs7YbU">浪费</th></tr></thead>
+      <tbody id="lc-tbody" data-page-node-id="Nu3xQlL5Wp2mObJyTt8ZcV"></tbody>
+    </table>
+    <div class="pager" id="lc-pager" data-page-node-id="Ov4yRmM6Xq3nPcKzUu9AdW"></div>
+    <div class="hint" id="lc-hint" data-page-node-id="Pw5zSnN7Yr4oQdLaVv1BeX"></div>
+  </div>
+
+  <!-- 收支损失统计 -->
+  <div class="panel" id="sec-waste" data-page-node-id="Db6yD1dSwjMVBQ18ce4kAx">
+    <div class="panel-head" data-page-node-id="EN4pnVjD0YrHFz4R1u4ylw"><h2 data-icon="pie" data-page-node-id="xBF1y6318wg8lO9rAagXRG">收支损失统计</h2></div>
+    <div class="waste-grid" id="waste" data-page-node-id="fSQo8o8dFYCKuu5etaZWS5"></div>
+    <div class="hint" data-page-node-id="5EXePa9T53sCSTNrMENjXJ">注：过期浪费与到期风险按资源包到期时间计算。「套餐用量」等订阅型资源按<b>本周期</b>口径计量（与官网「套餐与用量」一致 —— 服务端的累计 CapacityUsed 字段对这类资源不随周期消耗更新，会把已用光的套餐算成满额）；其余批次为累计口径，不含已过期包。</div>
+  </div>
+
+  <!-- 最近会话消耗 -->
+  <div class="panel" id="sec-sessions" data-page-node-id="VvGvsE4tRyTa1CbOzjGCtw">
+    <div class="panel-head" data-page-node-id="MPueSB2m9d1lzgHHO2FbAc"><h2 data-icon="chat" data-page-node-id="o9E5SDODHuabSdop9WjEni">最近会话消耗</h2><span class="src-inline" id="session-src" data-page-node-id="Sx7aTbN9Wq2rLmKjHh4YdA"></span></div>
+    <table data-page-node-id="RAPJT8HssLNbJeNdbRWGfA">
+      <thead data-page-node-id="JCNW6dHhI7ciu2mYAkMwwn"><tr data-page-node-id="n6H7F58KEdnKqUcpok4deb"><th data-page-node-id="nbIZYGGRecL5owkvw0kFsq">时间</th><th data-page-node-id="xXsEjFe0V13AGO1Gj0ui2f">会话标题</th><th data-page-node-id="kWAO3dsGEXOdMwtouzGYq7">模型</th><th data-page-node-id="37JiExfw7nmzgb0ae7JP7p">消耗积分</th><th data-page-node-id="JCjQkkwfCSXSpW6gqe2kQe">调用次数</th></tr></thead>
+      <tbody id="session-tbody" data-page-node-id="ajogW8Ui7waKAGajqgvNFX"></tbody>
+    </table>
+    <div class="pager" id="session-pager" data-page-node-id="fGQThlAfn2c25U3VEzPwKN"></div>
   </div>
 
   <!-- 消耗明细（请求级，服务端权威流水；口径 A） -->
@@ -892,54 +1124,6 @@
     </table>
     <div class="pager" id="req-pager" data-page-node-id="Sz9cGxQ2Bu8rThQdWy6DhA"></div>
     <div class="hint" data-page-node-id="Ta1dHyR3Cv9sUiReXz7EiB">注：本表为服务端权威流水（口径 A），与「会话消耗」的本地库口径相互独立、可用于对账。提示词为**运行时实时展示**，来自当前会话的接口响应；通过 <code>file://</code> 打开（读取静态 dashboard_data.js）时该列留空 —— 这是刻意的隐私设计，提示词永不落盘。</div>
-  </div>
-
-  <!-- 最近会话消耗 -->
-  <div class="panel" id="sec-sessions" data-page-node-id="VvGvsE4tRyTa1CbOzjGCtw">
-    <div class="panel-head" data-page-node-id="MPueSB2m9d1lzgHHO2FbAc"><h2 data-icon="chat" data-page-node-id="o9E5SDODHuabSdop9WjEni">最近会话消耗</h2><span class="src-inline" id="session-src" data-page-node-id="Sx7aTbN9Wq2rLmKjHh4YdA"></span></div>
-    <table data-page-node-id="RAPJT8HssLNbJeNdbRWGfA">
-      <thead data-page-node-id="JCNW6dHhI7ciu2mYAkMwwn"><tr data-page-node-id="n6H7F58KEdnKqUcpok4deb"><th data-page-node-id="nbIZYGGRecL5owkvw0kFsq">时间</th><th data-page-node-id="xXsEjFe0V13AGO1Gj0ui2f">会话标题</th><th data-page-node-id="kWAO3dsGEXOdMwtouzGYq7">模型</th><th data-page-node-id="37JiExfw7nmzgb0ae7JP7p">消耗积分</th><th data-page-node-id="JCjQkkwfCSXSpW6gqe2kQe">调用次数</th></tr></thead>
-      <tbody id="session-tbody" data-page-node-id="ajogW8Ui7waKAGajqgvNFX"></tbody>
-    </table>
-    <div class="pager" id="session-pager" data-page-node-id="fGQThlAfn2c25U3VEzPwKN"></div>
-  </div>
-
-  <!-- 积分批次与生命周期：同一个包池、三种问法
-       待用清单（资源接口 L3 / 该先烧哪批）· 有效期内（包明细 L6 / 这批怎么用的）· 已过期（L6 / 钱怎么没的）
-       为什么合并：原「积分批次」与「包生命周期 · 有效期内」是同一批对象、同样五列、同样排序，
-       实测 40/41 行完全重合 —— 两张表并排只会让两套状态口径各说各话。 -->
-  <div class="panel" id="sec-lifecycle" data-page-node-id="Ub2eIyS4Dw1tViQfAa8GjC">
-    <div class="panel-head" data-page-node-id="Vc3fJzT5Ex2uWjRgBb9HkD">
-      <h2 data-icon="list" data-page-node-id="Wd4gKaU6Fy3vXkShCc1IlE">积分批次与生命周期</h2>
-      <div class="tabs" id="lc-tabs" data-page-node-id="Xe5hLbV7Gz4wYlTiDd2JmF">
-        <button data-lc="pending" class="active" data-page-node-id="Yf6iMcW8Ha5xZmUjEe3KnG">待用清单</button>
-        <button data-lc="valid" data-page-node-id="Zg7jNdX9Ib6yAnVkFf4LoH">有效期内</button>
-        <button data-lc="expired" data-page-node-id="Qm3xTbW8Lc5nRvPdHh7KsA">已过期</button>
-      </div>
-    </div>
-    <!-- 数据源徽章：三层视角来自两个接口，边界写在脸上 ——
-         否则「为什么这里有套餐用量、那里没有」永远靠脚注解释。 -->
-    <div class="lc-src" id="lc-src" data-page-node-id="Rf2yUbV7Kd4mQpXnGg6JsB"></div>
-    <div class="cards" id="lc-cards" style="margin-bottom:16px" data-page-node-id="Ah8kOeY1Jc7zBoWlGg5MpI"></div>
-    <div class="filters" style="margin-bottom:14px" data-page-node-id="Bi9lPfZ2Kd8aCpXmHh6NqJ">
-      <input type="text" class="search-input" id="lc-search" placeholder="搜索资源包 / 类型 / 包码" data-page-node-id="Cj1mQgA3Le9bDqYnIi7OrK">
-      <button class="btn" id="export-lifecycle" style="padding:6px 12px;font-size:12.5px;" data-page-node-id="Dk2nRhB4Mf1cErZoJj8PsL">导出当前页签</button>
-    </div>
-    <!-- 「假期内到期」汇总：只在「待用清单」出现 —— 那是待办，不是回顾 -->
-    <div class="gap-note" id="lc-holiday" style="display:none" data-page-node-id="Fv8zKcP3Nb6qSoWlMm9RtC"></div>
-    <table data-page-node-id="El3oSciC5Ng2dFsApKk9QtM">
-      <thead data-page-node-id="Fm4pIdD6Oh3eGtBqLl0RuN"><tr data-page-node-id="Gn5qJeE7Pi4fHuCrMm1SvO"><th data-page-node-id="Ho6rKfF8Qj5gIvDsNn2TwP">到期时间</th><th data-page-node-id="Ip7sLgG9Rk6hJwEtOo3UxQ">状态</th><th data-page-node-id="Jq8tMhH1Sl7iKxFuPp4VyR">剩余</th><th data-page-node-id="Kr9uNiI2Tm8jLyGvQq5WzS">已用/总量</th><th data-page-node-id="Ls1vOjJ3Un9kMzHwRr6XaT">类型</th><th data-page-node-id="Mt2wPkK4Vo1lNaIxSs7YbU">浪费</th></tr></thead>
-      <tbody id="lc-tbody" data-page-node-id="Nu3xQlL5Wp2mObJyTt8ZcV"></tbody>
-    </table>
-    <div class="pager" id="lc-pager" data-page-node-id="Ov4yRmM6Xq3nPcKzUu9AdW"></div>
-    <div class="hint" id="lc-hint" data-page-node-id="Pw5zSnN7Yr4oQdLaVv1BeX"></div>
-  </div>
-
-  <!-- 收支损失统计 -->
-  <div class="panel" id="sec-waste" data-page-node-id="Db6yD1dSwjMVBQ18ce4kAx">
-    <div class="panel-head" data-page-node-id="EN4pnVjD0YrHFz4R1u4ylw"><h2 data-icon="pie" data-page-node-id="xBF1y6318wg8lO9rAagXRG">收支损失统计</h2></div>
-    <div class="waste-grid" id="waste" data-page-node-id="fSQo8o8dFYCKuu5etaZWS5"></div>
-    <div class="hint" data-page-node-id="5EXePa9T53sCSTNrMENjXJ">注：过期浪费与到期风险按资源包到期时间计算。「套餐用量」等订阅型资源按<b>本周期</b>口径计量（与官网「套餐与用量」一致 —— 服务端的累计 CapacityUsed 字段对这类资源不随周期消耗更新，会把已用光的套餐算成满额）；其余批次为累计口径，不含已过期包。</div>
   </div>
 
 </div>
@@ -985,7 +1169,7 @@
         if (days > 30) {
           e = addDays(s, 30);
           document.getElementById('range-end').value = e;
-          alert('自定义范围最长 30 天，已自动调整结束日期');
+          toast('自定义范围最长 30 天，已自动调整结束日期', 'warn');
         }
       }
       dateRange.start = s; dateRange.end = e;
@@ -1135,6 +1319,93 @@
     el.style.display = 'block';
     if (_toastTimer) clearTimeout(_toastTimer);
     _toastTimer = setTimeout(function () { el.style.display = 'none'; }, 3600);
+  }
+
+  // ---------- 通用提示框（替代原生 alert / confirm） ----------
+  // 为什么不用原生：① alert 阻塞 JS 绘制 —— 代码里改了按钮文案也刷不出来
+  //（v1.7.24 踩过：按钮卡死在「保存中…」）；② 无法跟随主题、无层级、不能放代码片段。
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  // 允许在文案里用反引号包代码：`python scripts/serve.py`
+  function uiRich(s) {
+    return escHtml(s).replace(/`([^`]+)`/g, '<code>$1</code>');
+  }
+
+  // 图标用内联 SVG：文本字形（i / ! ）在不同字体回退下粗细不一，观感不统一
+  const DLG_ICONS = {
+    ok: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"'
+      + ' stroke-linecap="round" stroke-linejoin="round"><path d="M3.4 8.4l3 3 6.2-6.6"/></svg>',
+    warn: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"'
+      + ' stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.7l5.7 10H2.3z"/>'
+      + '<path d="M8 6.4v3"/><circle cx="8" cy="11.1" r=".85" fill="currentColor" stroke="none"/></svg>',
+    bad: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"'
+      + ' stroke-linecap="round"><circle cx="8" cy="8" r="5.9"/><path d="M6.1 6.1l3.8 3.8M9.9 6.1l-3.8 3.8"/></svg>',
+    info: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"'
+      + ' stroke-linecap="round"><circle cx="8" cy="8" r="5.9"/><path d="M8 7.3v4.2"/>'
+      + '<circle cx="8" cy="4.8" r=".85" fill="currentColor" stroke="none"/></svg>'
+  };
+
+  /**
+   * 统一弹窗。o = {title, message, hint, tone:'info|ok|warn|bad',
+   *              cancel:true 显示取消按钮（即确认框）, okText, cancelText, danger}
+   * 返回 Promise<boolean>：确定 true / 取消或 Esc false。
+   */
+  function uiDialog(o) {
+    o = o || {};
+    return new Promise(function (resolve) {
+      const tone = o.tone || 'info';
+      const isConfirm = !!o.cancel;
+      const mask = document.createElement('div');
+      mask.className = 'expiry-mask';
+      mask.innerHTML =
+        '<div class="expiry-modal ui-dlg" role="dialog" aria-modal="true">' +
+          '<h3><span class="dlg-ic ' + tone + '">' + (DLG_ICONS[tone] || DLG_ICONS.info) + '</span>' +
+            escHtml(o.title || '提示') + '</h3>' +
+          (o.message ? '<p class="dlg-msg">' + uiRich(o.message) + '</p>' : '') +
+          (o.hint ? '<div class="dlg-hint">' + uiRich(o.hint) + '</div>' : '') +
+          '<div class="expiry-actions">' +
+            (isConfirm
+              ? '<button class="btn" data-act="cancel">' + escHtml(o.cancelText || '取消') + '</button>'
+              : '') +
+            '<button class="btn ' + (o.danger ? 'danger' : 'primary') + '" data-act="ok">' +
+              escHtml(o.okText || (isConfirm ? '确定' : '知道了')) + '</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(mask);
+
+      const okBtn = mask.querySelector('[data-act="ok"]');
+      const cancelBtn = mask.querySelector('[data-act="cancel"]');
+      const onKey = function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); done(isConfirm ? false : true); }
+        else if (e.key === 'Enter' && document.activeElement !== cancelBtn) done(true);
+      };
+      const done = function (v) {
+        document.removeEventListener('keydown', onKey);
+        mask.remove();
+        resolve(v);
+      };
+      // 点遮罩关闭：确认框按「取消」处理（避免误点当成确认）
+      mask.addEventListener('click', function (e) {
+        if (e.target === mask) done(isConfirm ? false : true);
+      });
+      if (cancelBtn) cancelBtn.addEventListener('click', function () { done(false); });
+      okBtn.addEventListener('click', function () { done(true); });
+      document.addEventListener('keydown', onKey);
+      setTimeout(function () { okBtn.focus(); }, 30);
+    });
+  }
+
+  function uiAlert(o) {
+    if (typeof o === 'string') o = { message: o };
+    o = Object.assign({}, o, { cancel: false });
+    return uiDialog(o);
+  }
+  function uiConfirm(o) {
+    if (typeof o === 'string') o = { message: o };
+    o = Object.assign({}, o, { cancel: true });
+    return uiDialog(o);
   }
 
   const ICONS = {
@@ -1315,9 +1586,13 @@
     const txt = el.querySelector('.nt-txt');
     const runBtn = el.querySelector('#upd-run');
     if (runBtn) {
-      runBtn.addEventListener('click', function () {
-        if (!confirm('升级到 v' + d.remote + '？\n\n升级包经 sha256 校验后覆盖安装，'
-          + '服务会自动重启（约 10~30 秒），完成后页面自动刷新。')) return;
+      runBtn.addEventListener('click', async function () {
+        const yes = await uiConfirm({
+          title: '升级到 v' + d.remote + '？',
+          message: '升级包经 sha256 校验后覆盖安装，服务会自动重启（约 10~30 秒），完成后页面自动刷新。',
+          okText: '开始升级'
+        });
+        if (!yes) return;
         runBtn.disabled = true;
         runBtn.textContent = '升级中…';
         if (txt) txt.innerHTML = '正在升级到 <b>v' + d.remote + '</b>…'
@@ -1421,7 +1696,7 @@
         (function poll() {
           if (Date.now() - t0 > 30000) {
             setBtn('检查更新');
-            alert('检查超时，请稍后重试（网络可能不通）');
+            toast('检查更新超时 —— 网络可能不通，稍后再试', 'warn');
             return;
           }
           fetchWithTimeout('/api/update', 8000)
@@ -1432,9 +1707,9 @@
               renderUpdateNote(d);
               setBtn('检查更新');
               if (d.state === 'same') {
-                alert('已是最新版本 v' + (d.local || d.remote || ''));
+                toast('已是最新版本 <b>v' + (d.local || d.remote || '') + '</b>', 'ok');
               } else if (d.state === 'error') {
-                alert('检查失败：' + (d.reason || '网络不通'));
+                toast('检查更新失败：' + (d.reason || '网络不通'), 'bad');
               }
               // state === 'newer' 时提示条已由 renderUpdateNote 显示，无需额外弹窗
             })
@@ -1470,9 +1745,32 @@
     if (soon.length === 0) return;        // 窗口内无到期批次，静默
     expiryAlertShown = true;              // 只弹一次
     const total = soon.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
-    const rows = soon.slice(0, 3).map(function (p) {
-      return '<div class="expiry-row"><span class="lbl">' + (p.label || p.name || '资源包') + '</span>' +
-             '<span class="val red">' + (p.cycle_end || '-') + ' 到期 · ' + p.remain.toFixed(2) + '</span></div>';
+    // 全部列出（原来 slice(0,3)：标题说「5 批」，列表只给 3 条，2 条被静默藏掉）
+    const dayGap = function (s) {
+      const t = new Date(String(s).replace(' ', 'T'));
+      if (isNaN(t)) return null;
+      const a = new Date(); a.setHours(0, 0, 0, 0);
+      const b = new Date(t); b.setHours(0, 0, 0, 0);
+      return Math.round((b - a) / 86400000);
+    };
+    const fmtWhen = function (s) {
+      const t = new Date(String(s).replace(' ', 'T'));
+      if (isNaN(t)) return s || '-';
+      const p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+      return (t.getMonth() + 1) + '-' + p2(t.getDate()) + ' ' + p2(t.getHours()) + ':' + p2(t.getMinutes());
+    };
+    const rows = soon.map(function (p) {
+      const g = dayGap(p.cycle_end);
+      const cls = g == null ? '' : (g <= 0 ? 'urgent' : (g === 1 ? 'soon' : ''));
+      const badge = g == null ? '' : (g <= 0 ? '今天' : (g === 1 ? '明天' : g + ' 天后'));
+      return '<div class="exp-item ' + cls + '">' +
+          '<div class="exp-l">' +
+            '<div class="exp-name">' + (badge ? '<span class="exp-badge">' + badge + '</span>' : '') +
+              escHtml(p.label || p.name || '资源包') + '</div>' +
+            '<div class="exp-when">' + fmtWhen(p.cycle_end) + ' 到期</div>' +
+          '</div>' +
+          '<div class="exp-amt"><b>' + p.remain.toFixed(2) + '</b><span>积分</span></div>' +
+        '</div>';
     }).join('');
     const mask = document.createElement('div');
     mask.className = 'expiry-mask';
@@ -1484,7 +1782,9 @@
           ? '<b>即将到期</b> —— 按你的工作日历，到期前已没几个工作日可以处理了'
           : '将在 <b>' + fmtWindow(hours) + '</b>内到期') +
         '，涉及 <b style="color:var(--red)">' + total.toFixed(2) + '</b> 积分，过期将作废。</p>' +
-        (rows ? '<div class="expiry-rows">' + rows + '</div>' : '') +
+        (rows ? '<div class="exp-list">' + rows + '</div>' : '') +
+        (soon.length > 4 ? '<p style="font-size:11.5px;color:var(--muted);margin:-6px 0 10px">'
+          + '共 ' + soon.length + ' 批，列表可上下滚动</p>' : '') +
         '<p style="font-size:12px;color:var(--muted)">建议优先使用即将到期的批次，长周期批次留后。</p>' +
         '<div class="expiry-actions">' +
           '<button class="btn" id="expiry-close">知道了</button>' +
@@ -1497,7 +1797,7 @@
     mask.querySelector('#expiry-settings').addEventListener('click', function () { mask.remove(); openAlertSettings(); });
     mask.querySelector('#expiry-goto').addEventListener('click', function () {
       mask.remove();
-      // 直接落到「待用清单」页签 —— 提醒说的就是这批该先烧的积分
+      // 直接落到「待用」页签 —— 提醒说的就是这批该先烧的积分
       switchLcTab('pending');
       const sec = document.getElementById('sec-lifecycle');
       if (sec) sec.scrollIntoView({ behavior: 'smooth' });
@@ -1635,7 +1935,7 @@
       } else {
         // 一个都不勾会让「工作日」这个概念失效 → 回退默认并明确告知，不静默糊弄
         lsSet(WORKDAYS_KEY, '1,2,3,4,5');
-        alert('没有勾选任何上班日 —— 已恢复为「周一至周五」。');
+        toast('没有勾选任何上班日 —— 已恢复为「周一至周五」', 'warn');
       }
       lsSet(USE_HOLIDAYS_KEY, mask.querySelector('#use-holidays').checked ? '1' : '0');
       // 观测窗口写后端（统计口径在服务端算，保持单一口径），写完再重载
@@ -1654,12 +1954,257 @@
         put('/api/set-config?key=browser_channel&value=' + _bc),
       ]).then(function (res) {
         const bad = res.filter(function (x) { return !x || x.ok === false; });
+        // 这些设置决定"首屏要不要弹框"，重载最省事也最不易漏 ——
+        // 但失败原因得让人看完再重载（重载会把提示一起清掉）
+        const reload = function () { location.reload(); };
         if (bad.length) {
-          alert('部分设置未保存：' + ((bad[0] && bad[0].message) || '未知原因'));
+          uiAlert({
+            tone: 'bad', title: '部分设置未保存',
+            message: (bad[0] && bad[0].message) || '未知原因',
+            hint: '其它设置已生效，点「知道了」后页面会重新加载。'
+          }).then(reload);
+        } else {
+          reload();
         }
-        location.reload();   // 这些设置决定"首屏要不要弹框"，重载最省事也最不易漏
       });
     });
+  }
+
+  // ---------- 自动签到（Windows 计划任务） ----------
+  // 为什么不是页面里的 setInterval：工作台页面全部关闭约 75 秒后，后台服务会自己退出
+  //（serve.py 的闲时看门狗）。定时器活在那个进程里，用户关掉页面就等于关掉自动签到，
+  // 而且**不会报任何错** —— 只表现为「开关开着、从来没签上」。
+  // 所以这个开关真正操作的是 Windows 计划任务：与工作台开不开无关。
+  let AC_STATE = null;
+
+  // '2026-10-24T09:30:00' → '10-24 09:30'
+  function acWhen(s) {
+    if (!s) return '—';
+    return String(s).slice(5, 16).replace('T', ' ');
+  }
+
+  function acLastText(last) {
+    if (!last || !last.at) return '还没有运行过';
+    const when = String(last.at).slice(5, 16);
+    const r = last.result || '';
+    if (r === 'success') return when + ' · 签到成功' + (last.credit != null ? '（+' + last.credit + ' 积分）' : '');
+    if (r === 'skipped') return when + ' · 今日已签，已跳过';
+    return when + ' · 失败：' + (last.message || '原因未知');
+  }
+
+  // 菜单徽章 + 签到按钮提示：状态要"不用点进去也看得见"
+  function acPaint(d) {
+    AC_STATE = d || null;
+    // drift = 配置开着但系统里确实没有这个任务 → 徽章不能亮，否则又是一次
+    // 「看着开着、实际不会运行」。查询失败（task_exists=null）则保留用户意图显示。
+    const on = !!(d && d.enabled && !d.drift);
+    const badge = document.getElementById('ac-menu-badge');
+    if (badge) badge.hidden = !on;
+    const btn = document.getElementById('checkin-btn');
+    if (btn && !btn.disabled) {
+      btn.title = on
+        ? '无需打开 WorkBuddy，直接完成每日签到（自动签到已开启：每天 ' + (d.time || '09:30') + '）'
+        : '无需打开 WorkBuddy，直接完成每日签到';
+    }
+  }
+
+  function acRefreshState() {
+    if (isStaticMode()) return Promise.resolve(null);
+    return fetch('/api/auto-checkin', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { acPaint(d); return d; })
+      .catch(function () { return null; });
+  }
+
+  function openAutoCheckin() {
+    if (isStaticMode()) {
+      uiAlert({
+        tone: 'info', title: '自动签到需要本地服务',
+        message: '自动签到要靠 Windows 计划任务，必须由本地服务来注册。',
+        hint: '静态页面只能看数据。双击桌面「积分工作台」启动器后再打开本页即可。'
+      });
+      return;
+    }
+    fetch('/api/auto-checkin', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .catch(function (e) { return { error: '无法连接本地服务：' + (e.message || e) }; })
+      .then(function (st) { acRenderModal(st || {}); });
+  }
+
+  function acRenderModal(st) {
+    if (st.error && !st.task_name) {
+      toast(st.error, 'bad');
+      return;
+    }
+    const enabled = !!st.enabled;
+    const drift = !!st.drift;
+    // task_exists 是三态：true / false / **null=查询失败**。
+    // null 绝不能写成「未注册」—— 那是把「读不到」画成「不存在」。
+    const WARN = ' style="color:#FCD34D"';
+    // 单元格只给一句短的分类 —— 完整原因（含 WinError 原文）放到下面那行提示里，
+    // 否则一整串「无法启动 schtasks.exe（[WinError 5] 拒绝访问）。通常是…」会把表格撑爆。
+    const qerr = String(st.task_query_error || 'schtasks 不可用');
+    const qshort = /被拦截|无法启动/.test(qerr) ? 'schtasks 被拦截，无法启动'
+      : (/找不到 schtasks/.test(qerr) ? '系统缺少 schtasks.exe'
+        : (qerr.length > 22 ? qerr.slice(0, 22) + '…' : qerr));
+    const taskCell = st.task_exists === true
+      ? ('已注册 · ' + (st.task_name || ''))
+      : (st.task_exists === false
+          ? (enabled ? '<span' + WARN + '>⚠ 配置是开启的，但系统里找不到这个任务</span>' : '未注册')
+          : ('<span' + WARN + '>⚠ 查询失败：' + qshort + '</span>'));
+    const rows = [
+      ['计划任务', taskCell],
+      ['下次运行', st.verified ? acWhen(st.next_run) : (enabled ? '无法确认（任务未注册或查不到）' : '—')],
+      ['上次运行', acLastText(st.last)],
+    ];
+    const mask = document.createElement('div');
+    mask.className = 'expiry-mask';
+    mask.innerHTML =
+      '<div class="expiry-modal">' +
+        '<h3><span class="checkin-ic">✓</span>自动签到</h3>' +
+        '<p>开启后由 <b>Windows 计划任务</b>每天定时签到 —— 工作台关着也照常签。</p>' +
+        '<div class="set-block">' +
+          '<label class="ac-toggle' + (enabled ? '' : ' is-off') + '" id="ac-toggle-wrap">' +
+            '<input type="checkbox" id="ac-enable"' + (enabled ? ' checked' : '') + '>' +
+            '<span class="ac-track"></span>' +
+            '<span class="ac-state" id="ac-state-txt">' + (enabled ? '已开启' : '未开启') + '</span>' +
+          '</label>' +
+        '</div>' +
+        '<div class="set-block">' +
+          '<label class="set-label">每天签到时间</label>' +
+          '<input type="time" class="select-input" id="ac-time" value="' + (st.time || '09:30') + '" style="width:100%;">' +
+          '<div class="set-note">关机或休眠错过这个点，会在下次<b>登录</b>后补跑一次（已签则跳过，不会重复）。' +
+            '任务以当前用户身份、非提权运行，所以需要你已登录桌面。</div>' +
+        '</div>' +
+        '<div class="expiry-rows" id="ac-rows">' + rows.map(function (r) {
+          return '<div class="expiry-row"><span class="lbl">' + r[0] + '</span><span class="val">' + r[1] + '</span></div>';
+        }).join('') + '</div>' +
+        (drift ? '<div class="ac-warn">⚠ ' + (st.drift_hint || '') + '</div>' : '') +
+        (st.task_exists === null
+          ? '<div class="ac-warn">⚠ ' + (st.task_hint || '') +
+            '<span class="ac-raw">原始信息：' + qerr + '</span></div>'
+          : '') +
+        '<div class="set-note">签到依赖浏览器会话。会话过期时这里会记下失败原因 —— ' +
+          '到工作台点一次「重新登录」即可恢复，不用重新开关。</div>' +
+        '<div class="ac-warn bad" id="ac-err" hidden></div>' +
+        '<div class="expiry-actions">' +
+          (st.verified ? '<button class="btn" id="ac-run">立即试跑一次</button>' : '') +
+          '<button class="btn" id="ac-cancel">取消</button>' +
+          '<button class="btn primary" id="ac-save">保存</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(mask);
+
+    const close = function () { mask.remove(); };
+    mask.addEventListener('click', function (e) { if (e.target === mask) close(); });
+    const onKey = function (e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
+    mask.querySelector('#ac-cancel').addEventListener('click', close);
+
+    // 失败提示落在弹窗里，不用 alert —— alert 会阻塞绘制，按钮文案改成「保存」
+    // 也刷不出来，用户看到的是卡死在「保存中…」的死按钮（实测截图就是这样）。
+    const errBox = mask.querySelector('#ac-err');
+    const escTxt = function (s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    };
+    const acErr = function (title, detail, hint) {
+      if (!title) { errBox.hidden = true; errBox.innerHTML = ''; return; }
+      errBox.innerHTML = '<div>⚠ ' + escTxt(title) + '</div>' +
+        (detail ? '<span class="ac-raw">' + escTxt(detail) + '</span>' : '') +
+        (hint ? '<div style="margin-top:5px;">' + escTxt(hint) + '</div>' : '');
+      errBox.hidden = false;
+    };
+
+    const chk = mask.querySelector('#ac-enable');
+    // 保存失败要把开关拨回真实状态：否则界面上「已开启」+「未注册」并列，
+    // 用户会以为已经开了，第二天发现根本没签。
+    const acResetToggle = function () {
+      chk.checked = !!st.enabled;
+      chk.parentElement.classList.toggle('is-off', !chk.checked);
+      mask.querySelector('#ac-state-txt').textContent = chk.checked ? '已开启' : '未开启';
+    };
+    chk.addEventListener('change', function () {
+      chk.parentElement.classList.toggle('is-off', !chk.checked);
+      mask.querySelector('#ac-state-txt').textContent = chk.checked ? '已开启' : '未开启';
+    });
+
+    mask.querySelector('#ac-save').addEventListener('click', function () {
+      const btn = this;
+      const want = chk.checked ? 1 : 0;
+      const tm = mask.querySelector('#ac-time').value || '09:30';
+      btn.disabled = true; btn.textContent = '保存中…';
+      acErr('');
+      fetch('/api/auto-checkin-set?enable=' + want + '&time=' + encodeURIComponent(tm), { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          if (!res.ok) {
+            btn.disabled = false; btn.textContent = '保存';
+            // 失败原因必须给全（拦截 / 权限 / XML / 解释器各不相同，用户要能照着自己修）
+            acErr(res.error || '未知原因', res.detail, res.hint);
+            acResetToggle();
+            return;
+          }
+          acPaint(res.status);
+          close();
+          // warning：配置已改但系统侧没确认（如权限不足删不掉旧任务）——
+          // 这种"部分成功"必须说出来，不能只弹一句「已关闭」
+          if (res.warning) toast(res.warning, 'warn');
+          else toast(want ? ('自动签到已开启：每天 ' + ((res.status && res.status.time) || tm) + ' 自动签到')
+                          : '自动签到已关闭');
+        })
+        .catch(function (e) {
+          btn.disabled = false; btn.textContent = '保存';
+          acErr('无法连接本地服务', (e && e.message) || String(e));
+        });
+    });
+
+    const runBtn = mask.querySelector('#ac-run');
+    if (runBtn) {
+      runBtn.addEventListener('click', function () {
+        const baseline = (st.last && st.last.ts) || 0;
+        runBtn.disabled = true; runBtn.textContent = '已触发，等结果…';
+        fetch('/api/auto-checkin-run', { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (res) {
+            if (!res.ok) {
+              runBtn.disabled = false; runBtn.textContent = '立即试跑一次';
+              acErr(res.error || '触发失败', res.detail, res.hint);
+              return;
+            }
+            let n = 0;
+            const timer = setInterval(function () {
+              n++;
+              fetch('/api/auto-checkin', { cache: 'no-store' })
+                .then(function (r) { return r.json(); })
+                .then(function (s2) {
+                  const ts = (s2.last && s2.last.ts) || 0;
+                  if (ts > baseline) {
+                    clearInterval(timer);
+                    runBtn.disabled = false; runBtn.textContent = '立即试跑一次';
+                    acPaint(s2);
+                    const lastRow = mask.querySelector('#ac-rows').children[2];
+                    if (lastRow) lastRow.querySelector('.val').textContent = acLastText(s2.last);
+                    const bad = s2.last && s2.last.result === 'failed';
+                    toast('试跑结果：' + (s2.last.message || s2.last.result), bad ? 'bad' : '');
+                    loadPanel('overview');   // 真签成了，概览的签到卡要跟着变
+                  } else if (n >= 6) {
+                    clearInterval(timer);
+                    runBtn.disabled = false; runBtn.textContent = '立即试跑一次';
+                    // 20 秒还没结果 ≠ 失败：任务可能还在等浏览器冷启动。
+                    // 但也不能假装成功 —— 让用户自己刷新看。
+                    toast('还没取到结果（任务可能仍在跑）。稍后重开本弹窗可看「上次运行」', 'warn');
+                  }
+                })
+                .catch(function () {});
+            }, 3500);
+          })
+          .catch(function (e) {
+            runBtn.disabled = false; runBtn.textContent = '立即试跑一次';
+            acErr('无法连接本地服务', (e && e.message) || String(e));
+          });
+      });
+    }
   }
 
   // ---------- 主渲染（面板级） ----------
@@ -1865,69 +2410,126 @@
       });
     } else { document.getElementById('chart-cum').innerHTML = '<div class="empty">暂无消耗数据</div>'; }
 
-    // 收支日历（按天，GitHub 贡献图风格）。显示完整数据范围（不受 7/14 天过滤截断）。
+    // 收支日历（按天，GitHub 贡献图形态）。显示完整数据范围（不受 7/14 天过滤截断）。
     const dailyCal = (D.usage_daily || []);       // L5 优先 / L2 兜底，完整范围
     const incomeCal = (D.income_daily || []);     // 自积累账本，完整范围
-    const heatChartExp = initChart('chart-heat-expense');
-    const heatChartInc = initChart('chart-heat-income');
-    const hasExp = dailyCal.some(function (x) { return x.credit > 0; });
-    const hasInc = incomeCal.some(function (x) { return x.income > 0; });
 
-    function calBaseOption(calData) {
-      return {
-        calendar: {
-          top: 30,
-          left: 40,
-          right: 20,
-          bottom: 70,
-          range: [calData[0].date, calData[calData.length - 1].date],
-          cellSize: ['auto', 22],
-          yearLabel: { show: false },
-          dayLabel: { firstDay: 1, nameMap: ['日', '一', '二', '三', '四', '五', '六'], fontSize: 10 },
-          monthLabel: { nameMap: 'cn', fontSize: 11 },
-          itemStyle: { color: 'rgba(148,163,184,.07)', borderColor: 'rgba(148,163,184,.16)', borderWidth: 1 },
-        },
-        tooltip: { formatter: function (p) { return p.value[0] + '<br/>' + p.value[2] + ' <b>' + p.value[1].toFixed(2) + '</b> 积分'; } },
-      };
+    // 为什么弃用 ECharts 的 calendar 坐标系：
+    //   calendar 会「按月分块换行」，格子宽度由容器宽度均分、高度由 cellSize 指定，
+    //   两者互不相干 —— 上一版就是 33×15 的扁横条，横向拉伸后既不像点阵也读不出节奏。
+    //   这里改用 scatter + 双 category 轴自己铺网格：symbolSize 是**像素**单位，
+    //   只要令 grid 高 = 7 × 列间距，格子就严格是正方形，与数据多寡、容器宽度都无关。
+    function hexRgb(h) {
+      const n = parseInt(h.slice(1), 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
     }
 
-    if (hasExp && dailyCal.length) {
-      heatChartExp.setOption(Object.assign(calBaseOption(dailyCal), {
-        visualMap: {
-          type: 'piecewise', dimension: 1, pieces: [
-            { min: 0, max: 50, color: '#0E4A5C', label: '<50' },
-            { min: 50, max: 200, color: '#0E7490', label: '50-200' },
-            { min: 200, max: 1000, color: '#22D3EE', label: '200-1k' },
-            { min: 1000, max: 99999, color: '#A5F3FC', label: '≥1k' },
-          ],
-          orient: 'horizontal', left: 'center', bottom: 10, textStyle: { fontSize: 10 },
-        },
-        series: [{
-          type: 'heatmap', coordinateSystem: 'calendar',
-          data: dailyCal.filter(function (x) { return x.credit > 0; }).map(function (x) { return [x.date, x.credit, '消耗']; }),
-          label: { show: false },
-        }],
-      }));
-    } else { document.getElementById('chart-heat-expense').innerHTML = '<div class="empty">暂无消耗数据（自今日起积累）</div>'; }
+    // 两张图共用同一条时间轴 —— 否则消耗起于 8 月、收入起于 3 月，两张宽度不同、
+    // 列对不齐，读者没法在同一列上做「这一周消耗 vs 收入」的对照。
+    const calDates = dailyCal.concat(incomeCal).map(function (x) { return x.date; }).sort();
+    let calAxis = null;
+    if (calDates.length) {
+      const c0 = new Date(calDates[0] + 'T00:00:00');
+      const c1 = new Date(calDates[calDates.length - 1] + 'T00:00:00');
+      const s = new Date(c0); s.setDate(s.getDate() - ((s.getDay() + 6) % 7));      // 回退到周一
+      const e = new Date(c1); e.setDate(e.getDate() - ((e.getDay() + 6) % 7));      // 前进到周一
+      calAxis = { start: s, weeks: Math.round((e - s) / 6048e5) + 1 };
+    }
 
-    if (hasInc && incomeCal.length) {
-      heatChartInc.setOption(Object.assign(calBaseOption(incomeCal), {
-        visualMap: {
-          type: 'piecewise', dimension: 1, pieces: [
-            { min: 0, max: 50, color: '#0D3B22', label: '<50' },
-            { min: 50, max: 200, color: '#15653A', label: '50-200' },
-            { min: 200, max: 1000, color: '#26A641', label: '200-1k' },
-            { min: 1000, max: 99999, color: '#7EE787', label: '≥1k' },
-          ],
-          orient: 'horizontal', left: 'center', bottom: 10, textStyle: { fontSize: 10 },
+    function renderCalGrid(domId, rows, valueKey, stops, unitLabel) {
+      const el = document.getElementById(domId);
+      if (!calAxis) { el.style.height = ''; el.innerHTML = '<div class="empty">暂无' + unitLabel + '记录</div>'; return; }
+      const byDate = {};
+      rows.forEach(function (x) { const v = Number(x[valueKey]) || 0; if (v > 0) byDate[x.date] = v; });
+      if (!Object.keys(byDate).length) {
+        el.style.height = ''; el.innerHTML = '<div class="empty">暂无' + unitLabel + '记录</div>'; return;
+      }
+
+      const weeks = calAxis.weeks;
+      const W = el.clientWidth || 900;
+      const padT = 3, padB = 18;
+      // 格子尺寸固定在一个窄区间：下限保证能看清，上限防止周数少时把图撑成巨幕。
+      // 超出容器宽时压缩到刚好铺满（退化为「格子略小」而不是横向滚动）。
+      const avail = W - 20;
+      const unit = Math.max(13, Math.min(26, Math.floor(avail / weeks)));
+      const gw = Math.min(avail, weeks * unit);
+      const padL = Math.round((W - gw) / 2);
+      const gh = 7 * unit;                             // y 单位 = x 单位 ⇒ 正方形
+      el.style.height = Math.round(padT + gh + padB) + 'px';
+
+      // 上限取 P80 而非 max：单日尖峰会把其余日子全压成同一个暗色，梯度就白做了
+      const vals = Object.keys(byDate).map(function (d) { return byDate[d]; }).sort(function (a, b) { return a - b; });
+      const cap = vals[Math.min(vals.length - 1, Math.floor(vals.length * 0.8))] || 1;
+      function ramp(t) {
+        t = Math.max(0, Math.min(1, t));
+        const seg = (stops.length - 1) * t;
+        const i = Math.min(stops.length - 2, Math.floor(seg));
+        const f = seg - i, a = hexRgb(stops[i]), b = hexRgb(stops[i + 1]);
+        return 'rgb(' + [0, 1, 2].map(function (k) { return Math.round(a[k] + (b[k] - a[k]) * f); }).join(',') + ')';
+      }
+
+      const today = todayStr();
+      const xLabels = [];
+      const data = [];
+      let lastLabW = -99;
+      for (let w = 0; w < weeks; w++) {
+        const mon = new Date(calAxis.start); mon.setDate(mon.getDate() + w * 7);
+        let lab = '';
+        for (let k = 0; k < 7; k++) {
+          const d = new Date(mon); d.setDate(d.getDate() + k);
+          const ds = fmtDate(d);
+          // 月份标签只落在「该周含 1 号」的列上；列宽不足时自动隔月，否则标签会互相压住
+          if (d.getDate() === 1 && w - lastLabW >= 4) { lab = (d.getMonth() + 1) + '月'; lastLabW = w; }
+          if (ds > today) continue;
+          const v = byDate[ds];
+          data.push({
+            value: [w, (d.getDay() + 6) % 7],
+            date: ds,
+            val: v == null ? 0 : v,
+            // 空格要「看得见但读不进来」：比卡片亮一档正好撑出矩阵结构，
+            // 再亮就会跟有数据的格子抢注意力
+            itemStyle: { color: v == null ? '#1F2731' : ramp(Math.sqrt(v / cap)) },
+          });
+        }
+        xLabels.push(lab);
+      }
+
+      initChart(domId).setOption({
+        grid: { left: padL, top: padT, width: gw, height: gh },
+        xAxis: {
+          type: 'category', data: xLabels, boundaryGap: true,
+          axisLine: { show: false }, axisTick: { show: false },
+          axisLabel: { fontSize: 10, color: '#6E7A8C', interval: 0, margin: 7 },
+        },
+        yAxis: {
+          type: 'category', data: ['一', '二', '三', '四', '五', '六', '日'], inverse: true,
+          axisLine: { show: false }, axisTick: { show: false },
+          // 隔三行标一次（周一/周四/周日），与 GitHub 一样只做方位参照、不逐行念
+          axisLabel: { fontSize: 9, color: '#55606E', interval: 2, margin: 6 },
+        },
+        tooltip: {
+          formatter: function (p) {
+            const d = p.data;
+            return d.date + (d.val > 0 ? '<br/>' + unitLabel + ' <b>' + d.val.toFixed(2) + '</b> 积分' : '<br/>无' + unitLabel);
+          },
         },
         series: [{
-          type: 'heatmap', coordinateSystem: 'calendar',
-          data: incomeCal.filter(function (x) { return x.income > 0; }).map(function (x) { return [x.date, x.income, '收入']; }),
-          label: { show: false },
+          type: 'scatter', symbol: 'rect',
+          symbolSize: [unit - 3, unit - 3],
+          data: data,
+          itemStyle: { borderRadius: unit >= 16 ? 3 : 2 },
+          emphasis: { itemStyle: { borderColor: '#FFFFFF', borderWidth: 1 } },
         }],
-      }));
-    } else { document.getElementById('chart-heat-income').innerHTML = '<div class="empty">所选范围内暂无收入记录</div>'; }
+      });
+    }
+
+    // 两张共用同一套色相逻辑：消耗走青蓝、收入走绿 —— 形态一致但身份一眼可分。
+    // 色阶的高端刻意不推到近白：#9BF0C6 那一档铺满一整片时会荧光刺眼，
+    // 点阵的「量感」靠明度递进就够，不需要靠最亮那一端喊话。
+    renderCalGrid('chart-heat-expense', dailyCal, 'credit',
+      ['#0C3B4E', '#0E7490', '#1FA8C4', '#6FE3F5'], '消耗');
+    renderCalGrid('chart-heat-income', incomeCal, 'income',
+      ['#16432A', '#1D7A44', '#2BB673', '#6EE7B7'], '收入');
   }
 
   // ---- 概览 · 表格区（收支账本 / 最近会话 / 积分批次）----
@@ -1980,7 +2582,7 @@
         return '<tr><td class="num">' + (s.time || '-') + '</td><td class="title-cell" title="' + (s.title || '') + '">' + (s.title || '-') + '</td><td class="num">' + (s.model || '-') + '</td><td class="num">' + s.credit.toFixed(2) + '</td><td class="num">' + s.n_calls + '</td></tr>';
       }).join('') || '<tr><td colspan="5" class="empty">' + sessionEmptyMsg() + '</td></tr>';
     });
-    // 批次表已并入「积分批次」面板（待用清单页签），概览这里不再重复渲染同一批对象
+    // 批次表已并入「积分批次」面板（待用页签），概览这里不再重复渲染同一批对象
   }
 
   // ---- 概览面板总装 ----
@@ -2066,19 +2668,26 @@
       { title: '按模型', list: mb }, { title: '按客户端', list: cb }, { title: '按用途', list: pb },
     ].map(function (g) {
       const n = g.list.length;
-      const head = '<div class="bk-hd"><span class="bk-hd-t">' + g.title + '</span>' +
-        '<span class="bk-hd-m">' + (n > 5 ? '前 5 / 共 ' + n + ' 项' : '共 ' + n + ' 项') + '</span></div>';
-      if (!n) return '<div class="bk-col">' + head + '<div class="bk-sub" style="padding:4px 7px">暂无数据</div></div>';
-      // 条长按该维度「全量」求和折算，表达的是真实份额；不取相对第一名的相对值
+      if (!n) return '<div class="bk-col"><div class="bk-hd"><span class="bk-hd-t">' + g.title + '</span></div><div class="bk-sub" style="padding:4px 7px">暂无数据</div></div>';
+      // 条长与占比都按该维度「全量」折算 —— 第一名要读出"垄断感"，这是构成区存在的意义
       const total = g.list.reduce(function (s, x) { return s + (x.credit || 0); }, 0) || 1;
+      const head = '<div class="bk-hd"><span class="bk-hd-t">' + g.title + '</span>' +
+        '<span class="bk-hd-m" title="' + (n > 5 ? '共 ' + n + ' 项，此处显示前 5' : '共 ' + n + ' 项') + '">合计 ' +
+        fmtCredit(total) + ' · 共 ' + n + ' 项</span></div>';
       return '<div class="bk-col">' + head +
-        '<div class="bk-cols"><span>名称</span><span>积分</span><span>次数</span></div>' +
+        '<div class="bk-cols"><span>名称</span><span></span><span>积分</span><span>占比</span></div>' +
         g.list.slice(0, 5).map(function (x, i) {
-          const pct = Math.max(0.6, ((x.credit || 0) / total) * 100);
-          return '<div class="bk-row' + (i === 0 ? ' is-top' : '') + '" style="--w:' + pct.toFixed(1) + '%">' +
-                 '<span class="bk-name" title="' + (x.name || '') + '">' + (x.name || '-') + '</span>' +
+          const pct = ((x.credit || 0) / total) * 100;
+          // --w 传 0~1 的无单位比例、由 CSS 乘 100% 得到条长：
+          // 带 % 的字符串没法参与 calc，条长就会跟轨道对不上
+          // 次数降级到 tooltip：视觉上占比比次数更有信息量，少一列反而更聚焦
+          return '<div class="bk-row' + (i === 0 ? ' is-top' : '') +
+                 '" style="--w:' + (pct / 100).toFixed(4) + ';--o:' + (i === 0 ? 1 : Math.max(0.42, 0.86 - i * 0.13)).toFixed(2) + '"' +
+                 ' title="' + (x.name || '') + ' · ' + (x.count || 0) + ' 次">' +
+                 '<span class="bk-name">' + (x.name || '-') + '</span>' +
+                 '<span class="bk-bar"><i></i></span>' +
                  '<span class="bk-val">' + fmtCredit(x.credit) + '</span>' +
-                 '<span class="bk-cnt">' + (x.count || 0).toLocaleString('en-US') + '</span>' +
+                 '<span class="bk-pct">' + (pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)) + '%</span>' +
                  '</div>';
         }).join('') + '</div>';
     }).join('');
@@ -2110,8 +2719,16 @@
     setupPager('req-pager', all.length, 15, function (page) {
       const start = (page - 1) * 15;
       document.getElementById('req-tbody').innerHTML = all.slice(start, start + 15).map(function (r) {
+        // 单行展示：换行和连续空白先压平，否则 CSS 截断前就已经被折行了
+        const flat = (r.input || '').replace(/\s+/g, ' ').trim();
+        // 粘贴截图产生的本地文件路径（这里最常见的长内容）：降成等宽灰字，
+        // 免得一片 C:\Users\... 和真正的提示词抢同一层注意力。
+        // 路径常被 `<image_local_path>` 之类的标签包着，先剥掉标签再判断。
+        const probe = flat.replace(/^<[^>]{1,40}>\s*/, '');
+        const isPath = !/\s/.test(probe) && /^([A-Za-z]:[\\/]|\/|~[\\/])/.test(probe);
         const prompt = r.has_input
-          ? '<div class="prompt-text" title="' + (r.input || '').replace(/"/g, '&quot;') + '">' + (r.input || '') + '</div>'
+          ? '<div class="prompt-text' + (isPath ? ' is-path' : '') + '"' +
+            ' data-tip="' + escHtml(r.input || '').replace(/"/g, '&quot;') + '">' + escHtml(flat) + '</div>'
           : '<span class="bk-sub">—（历史记录，服务端仅保留约 32 天）</span>';
         return '<tr><td class="num">' + (r.time || '-') + '</td>' +
                '<td>' + (r.model || '-') + '</td>' +
@@ -2122,6 +2739,61 @@
       }).join('') || '<tr><td colspan="6" class="empty">' + reqEmptyMsg() + '</td></tr>';
     });
   }
+
+  // 提示词全文气泡：原生 title 对 150 字符的路径会拉成一整行横跨屏幕、
+  // 而且不能换行，读起来比截断还累。这里按「有宽度上限 + 原样折行」自绘一个。
+  // 事件委托挂在 document 上，表格分页重渲染后不需要重新绑定。
+  (function initPromptTip() {
+    const tip = document.createElement('div');
+    tip.className = 'prompt-tip';
+    document.body.appendChild(tip);
+    let cur = null, timer = null, suppressUntil = 0;
+
+    function hide() {
+      clearTimeout(timer);
+      timer = null;
+      cur = null;
+      tip.classList.remove('on');
+    }
+
+    function show(el) {
+      // 滚动过程中指针下滑过的行会连续触发 mouseover，那不是"悬停" —— 别一路弹气泡
+      if (Date.now() < suppressUntil) return;
+      const txt = el.getAttribute('data-tip') || '';
+      if (!txt || !el.isConnected) return;
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight) return;   // 已经滚出屏幕就别硬弹
+      tip.textContent = txt;                    // 先填内容，才量得到真实高度
+      const tw = tip.offsetWidth, th = tip.offsetHeight, gap = 8;
+      // 默认贴在被截断那一行的下方；下方放不下就翻到上方（详情表常在页面底部）
+      let top = r.bottom + gap;
+      if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - gap);
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 8));
+      tip.style.top = Math.round(top) + 'px';
+      tip.style.left = Math.round(left) + 'px';
+      tip.classList.add('on');
+    }
+
+    document.addEventListener('mouseover', function (e) {
+      const el = e.target && e.target.closest ? e.target.closest('.prompt-text') : null;
+      if (!el) return;
+      if (el === cur && tip.classList.contains('on')) return;
+      hide();
+      cur = el;
+      timer = setTimeout(function () { timer = null; show(el); }, 140);
+    });
+    document.addEventListener('mouseout', function (e) {
+      const el = e.target && e.target.closest ? e.target.closest('.prompt-text') : null;
+      if (el && el === cur) hide();
+    });
+    // 气泡是 fixed 定位，页面一滚就跟不上那条文字了 —— 立刻撤掉画面，
+    // 并给滚动的余波留 200ms 静默期，免得滚一下就在指针位置糊出一串气泡
+    window.addEventListener('scroll', function () {
+      suppressUntil = Date.now() + 200;
+      hide();
+    }, true);
+    window.addEventListener('resize', hide);
+  })();
 
   // 一张空表至少有四种含义，早先被合并成一句「服务端接口不可用或窗口内无记录」——
   // 用户没法判断该重试、该放宽范围，还是该接受「这段时间真的没消耗」。
@@ -2210,22 +2882,19 @@
     });
   }
 
-  // 三个页签 = 同一个包池的三种问法，共用等宽列与同一套到期标记，只换数据源与归纳口径。
-  // 为什么不保留两张表：两张表就是两套状态口径（前端按余额推算 vs 服务端状态码），
-  // 迟早对同一批包给出「可用 / 已过期」两个答案，而用户在页面上没法判断谁对。
+  // 两个页签 = 同一个包池的两种问法，共用等宽列与同一套到期标记。
+  // 切分依据是「还能不能用」而不是「数据从哪个接口来」—— 后者用户读不出区别：
+  // 曾经的「待用清单 / 有效期内」按接口切，实测 42 行里 41 行完全重合。
   function lcSourceInfo(kind) {
     if (kind === 'pending') return {
       badge: '资源接口 · L3',
-      txt: '「先烧哪批」：按到期时间升序，含<b>套餐用量</b>（包明细接口不含订阅型资源）。' +
-           '状态由前端按「剩余 &gt; 0 且未到期」判定，与该包在另外两个页签里的服务端状态码可能相差一拍。'
-    };
-    if (kind === 'valid') return {
-      badge: '包明细接口 · L6',
-      txt: '「这批怎么用的」：状态为服务端码值（0 有效 / 3 到期前已用完），另含包码、资源 ID、服务端失效时刻 —— 点任意一行可看。'
+      txt: '「先烧哪批」：只列<b>还有余额</b>的批次，按到期时间升序，含<b>套餐用量</b>（包明细接口不含订阅型资源）。' +
+           '已烧光或已作废的批次不在这一页，见<b>「已结束」</b>。'
     };
     return {
-      badge: '包明细接口 · L6',
-      txt: '「钱怎么没的」：浪费由服务端直出（到期时未用完的剩余积分），非本地推算；按到期时间倒序。'
+      badge: '包明细接口 · L6 ＋ 资源接口 · L3',
+      txt: '「钱怎么没的」：已过期（服务端直出浪费）＋ 已用完（未到期但余额归零），按到期时间倒序。' +
+           '主流批次带包码 / 资源 ID / 服务端失效时刻，点任意一行可看；仅资源接口有的（如套餐用量）只能开简版。'
     };
   }
 
@@ -2235,51 +2904,90 @@
     const pending = D.expiry_list || [];
     const wa = D.waste_authoritative || {};
 
+    // 「待用」只留还有余额的批次。原先这里塞的是全部 42 行（含 6 行 0 余额的死批次），
+    // 而排序按到期升序 —— 正好把那 6 行顶到首屏前 5 行：一个回答「该先烧哪批」的表，
+    // 第一屏全是无批可烧的。它们属于「钱怎么没的」，不属于这里。
+    const pendingLive = pending.filter(function (p) { return (p.remain || 0) > 0; });
+
+    // 「已结束」= 已过期 ∪ 已用完（未到期但烧光）。
+    // 以包明细接口（L6）为主：它的浪费是服务端直出、还带包码；再用资源接口（L3）补上
+    // L6 不返回的那批（订阅型套餐用量、体验版包）—— 不补的话这些批次会两头都不出现。
+    // 去重键用 (名称, 到期, 总量)：两个接口没有共同的批次 ID。
+    //
+    // 两处不能想当然的地方：
+    //  ① 「已过期 / 已用完」必须按服务端状态码判（2 = 到期作废，3 = 到期前已用完），
+    //     不能按「这个包在 expired 列表里」判 —— 实测 159 条过期批次里有 97 条其实是 status 3，
+    //     它们没有浪费。按列表判会把 97 个「提前烧光」错标成「钱白扔了」。
+    //  ② 排序要用服务端失效时刻（expired_time），不是周期结束时间（cycle_end）。
+    //     有个 5000 分包 cycle_end 是 2027-03-31、实际 2026-09-07 就用光了，
+    //     按 cycle_end 排它会飞到「最近结束」的第一位。
+    const ended = (function () {
+      const out = [], seen = {};
+      const key = function (p) {
+        return (p.name || '') + '|' + (p.cycle_end || '') + '|' + (Number(p.size) || 0).toFixed(2);
+      };
+      const push = function (p, src) {
+        const k = key(p);
+        if (seen[k]) return;
+        seen[k] = 1;
+        // status 2 = 到期作废；其余（3，或 0 但余额已归零的边界）都算烧光
+        const how = (p.status === 2 || p.status === '已过期') ? '已过期' : '已用完';
+        out.push(Object.assign({}, p, { _src: src, _how: how }));
+      };
+      expired.forEach(function (p) { push(p, 'l6'); });
+      valid.forEach(function (p) {
+        // 还有余额、服务端也没标「到期前已用完」→ 这批没结束，不该出现在这里
+        if ((p.remain || 0) > 0 && p.status !== 3) return;
+        push(p, 'l6');
+      });
+      pending.forEach(function (p) {
+        if ((p.remain || 0) > 0) return;
+        push(p, 'l3');
+      });
+      // 倒序：刚结束的才是有信息量的，陈年旧账往下沉
+      return out.sort(function (a, b) {
+        return String(b.expired_time || b.cycle_end || '').localeCompare(String(a.expired_time || a.cycle_end || ''));
+      });
+    })();
+
     // 概览卡随页签切换
     function cards(kind) {
       if (kind === 'pending') {
-        const avail = pending.filter(function (p) { return p.status === '可用'; });
-        const remain = avail.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
+        const remain = pendingLive.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
         const now = Date.now();
-        const soon = pending.filter(function (p) {
-          return (p.remain || 0) > 0 && p.exp_ts && p.exp_ts > now &&
-                 (p.exp_ts - now) / 86400000 <= DUE_SOON_DAYS;
+        const soon = pendingLive.filter(function (p) {
+          return p.exp_ts && p.exp_ts > now && (p.exp_ts - now) / 86400000 <= DUE_SOON_DAYS;
         });
         const soonSum = soon.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
-        const subCount = pending.filter(function (p) { return p.cycle_based; }).length;
+        const subCount = pendingLive.filter(function (p) { return p.cycle_based; }).length;
         return [
-          { cls: '', icon: 'list', k: '待用批次', v: pending.length + ' 个',
-            d: '可用 ' + avail.length + ' · 已用完 ' + (pending.length - avail.length) +
-               (subCount ? ' · 含套餐用量 ' + subCount + ' 类' : '') },
+          { cls: '', icon: 'list', k: '待用批次', v: pendingLive.length + ' 个',
+            d: (subCount ? '含套餐用量 ' + subCount + ' 类 · ' : '') + '另有 ' + ended.length + ' 个已结束' },
           { cls: 'green', icon: 'bolt', k: '可用余额', v: remain.toFixed(2) + ' 积分', d: '可用批次剩余合计（订阅型按本周期）' },
           { cls: soon.length ? 'amber' : '', icon: 'alert', k: DUE_SOON_DAYS + ' 天内到期', v: soon.length + ' 批',
             d: soonSum.toFixed(2) + ' 积分 · 假期内到期另有标记' },
         ];
       }
-      if (kind === 'valid') {
-        const remain = valid.reduce(function (s, p) { return s + (p.remain || 0); }, 0);
-        const used = valid.reduce(function (s, p) { return s + (p.used || 0); }, 0);
+      // 已结束：先回答「一共没了多少」，再拆成「作废」（真损失）与「用完」（不算损失）。
+      // 这两个数混在一起时，用户没法判断该为哪一部分心疼。
+      // 清单一个都没取到时必须写「—」：全零卡片会被读成「一个包都没浪费」。
+      if (!ended.length) {
         return [
-          { cls: '', icon: 'wallet', k: '有效期内批次', v: valid.length + ' 个', d: '含「已用完」的到期前批次' },
-          { cls: 'green', icon: 'bolt', k: '可用余额', v: remain.toFixed(2) + ' 积分', d: '有效批次剩余合计' },
-          { cls: '', icon: 'chart', k: '已消耗', v: used.toFixed(2) + ' 积分', d: '有效批次累计已用' },
+          { cls: '', icon: 'wallet', k: '已结束批次', v: '—', d: wa.degraded ? '包明细接口未取到' : '确实没有已结束的批次' },
+          { cls: 'red', icon: 'loss', k: '其中作废浪费', v: '—', d: wa.degraded ? (wa.error || '包明细接口不可用').slice(0, 60) : '无可统计对象' },
+          { cls: '', icon: 'chart', k: '实际用掉', v: '—', d: '—' },
         ];
       }
-      const byMonth = wa.by_month || {};
-      const months = Object.keys(byMonth).sort();
-      // 已过期页签的三张卡全部由「已过期」清单派生：清单没取到就必须写「—」，
-      // 否则全零卡片会被读成「一个包都没浪费」。
-      if (wa.degraded) {
-        return [
-          { cls: 'red', icon: 'loss', k: '实际浪费', v: '—', d: '包明细接口未取到 · 暂无法统计' },
-          { cls: 'amber', icon: 'alert', k: '从未使用', v: '—', d: '同理，需先取到已过期清单' },
-          { cls: '', icon: 'list', k: '过期批次', v: '—', d: (wa.error || '包明细接口不可用').slice(0, 70) },
-        ];
-      }
+      const usedSum = ended.reduce(function (s, p) { return s + (p.used || 0); }, 0);
+      const wastedSum = ended.reduce(function (s, p) { return s + (p.wasted || 0); }, 0);
+      const nExpired = ended.filter(function (p) { return p._how === '已过期'; }).length;
+      const neverUsed = ended.filter(function (p) { return (p.size || 0) > 0 && (p.used || 0) <= 0; }).length;
       return [
-        { cls: 'red', icon: 'loss', k: '实际浪费', v: (wa.wasted_total || 0).toFixed(2) + ' 积分', d: (wa.wasted_count || 0) + ' 个包到期未用完' },
-        { cls: 'amber', icon: 'alert', k: '从未使用', v: (wa.never_used_total || 0).toFixed(2) + ' 积分', d: (wa.never_used_count || 0) + ' 个包一分未动' },
-        { cls: '', icon: 'list', k: '过期批次', v: (wa.expired_count || expired.length) + ' 个', d: months.length ? ('跨度 ' + months[0] + ' ~ ' + months[months.length - 1]) : '—' },
+        { cls: '', icon: 'wallet', k: '已结束批次', v: ended.length + ' 个',
+          d: '已过期 ' + nExpired + ' · 已用完 ' + (ended.length - nExpired) },
+        { cls: wastedSum > 0 ? 'red' : '', icon: 'loss', k: '其中作废浪费', v: wastedSum.toFixed(2) + ' 积分',
+          d: neverUsed ? '另有 ' + neverUsed + ' 批一分未动' : '到期时未用完的剩余（服务端直出）' },
+        { cls: '', icon: 'chart', k: '实际用掉', v: usedSum.toFixed(2) + ' 积分', d: '这些批次被消耗掉的部分' },
       ];
     }
     document.getElementById('lc-cards').innerHTML = cards(lcState.kind).map(function (c) {
@@ -2288,14 +2996,17 @@
     }).join('');
 
     const kind = lcState.kind;
-    const isL3 = kind === 'pending';
-    const list = isL3 ? pending : (kind === 'valid' ? valid : expired);
+    const isPending = kind === 'pending';
+    const list = isPending ? pendingLive : ended;
     // 这个页签背后的数据源这一次到底取到了没有 —— 徽章、空表文案、卡片三处共用同一判定，
     // 避免出现「徽章说正常、表格说接口不可用」这种自相矛盾。
     const h6 = (D.sources_health || {}).l6 || {};
-    const srcBad = isL3 ? false
-      : (kind === 'expired' ? !!wa.degraded
-                            : (h6.status === 'missing' || h6.status === 'degraded'));
+    const l6Bad = !!(wa.degraded || h6.status === 'missing' || h6.status === 'degraded');
+    // 「已结束」是双源的：L6 挂了但 L3 还有几条已用完的，表里就不是空的 —— 但缺的是全部过期记录，
+    // 所以分成两档提示（完全取不到 / 只取到一部分），别用同一句话糊过去。
+    const l6Rows = ended.filter(function (p) { return p._src === 'l6'; }).length;
+    const srcBad = !isPending && l6Bad && !l6Rows;
+    const srcPartial = !isPending && l6Bad && l6Rows > 0;
     const q = (lcState.filter || '').toLowerCase();
     const filtered = list.filter(function (p) {
       return !q || (p.name || '').toLowerCase().includes(q) ||
@@ -2309,10 +3020,12 @@
       const body = filtered.slice(start, start + 15).map(function (p, i) {
         const idx = start + i;
         const due = dueInfo(p);
-        if (isL3) {
-          // 资源接口这一侧只有 5 个字段：没有浪费（还没到期）、没有包码。
-          // 「类型」列与另两个页签保持同一语义（都显示 PackageName），把分类 / 计量口径作为后缀 ——
-          // 否则同一批包在待用清单显示「权益赠送包」、在有效期内显示包名，用户会以为是两批。
+        // 「已结束」是混合列表：L3 来源的行没有浪费与包码，L6 来源的有。按行判定，不按页签。
+        const rowIsL3 = isPending || p._src === 'l3';
+        if (rowIsL3) {
+          // 资源接口这一侧只有 5 个字段：没有浪费、没有包码。
+          // 「类型」列与另一来源保持同一语义（都显示 PackageName），把分类 / 计量口径作为后缀 ——
+          // 否则同一批包在两个页签显示不同名字，用户会以为是两批。
           const tag = statusCls[p.status] || 'used';
           let lbl = (p.name || '-');
           if (p.label) lbl += ' <span class="bk-sub">· ' + p.label + '</span>';
@@ -2329,22 +3042,36 @@
                  '<td class="num">' + (p.remain || 0).toFixed(2) + '</td>' +
                  '<td class="num">' + (p.used || 0).toFixed(2) + '/' + (p.size || 0).toFixed(2) + '</td>' +
                  '<td>' + lbl + '</td>' +
-                 '<td class="num"><span class="bk-sub" title="尚未到期，因此没有浪费">—</span></td></tr>';
+                 '<td class="num">' + (isPending
+                   ? '<span class="bk-sub" title="尚未到期，因此没有浪费">—</span>'
+                   : '<span class="bk-sub" title="这一批只有资源接口返回，包明细接口不返回，拿不到服务端浪费口径">—</span>') +
+                 '</td></tr>';
         }
         const tag = LC_STATUS_TAG[p.status] || 'used';
         const waste = p.wasted > 0 ? '<span class="neg">-' + p.wasted.toFixed(2) + '</span>' : '<span class="bk-sub">—</span>';
+        // 「已过期」与「已用完」不能只靠状态列区分：前者是钱白扔了，后者只是提前烧光。
+        // 在「已结束」页签里用状态列的 tag 承担这个区分，浪费列只在真的作废时才有数。
+        // 到期时间列仍显示周期结束时间；但排序用的是服务端失效时刻 —— 提前用尽的包两者能差几个月，
+        // 挂个 tooltip 说明，否则「排在前面的日期比下面都晚」看起来像排序坏了。
+        // 不用星号之类的可见标记：提前用尽的行占多数，满屏记号等于没有记号。
+        const endDiff = (p.expired_time || '').slice(0, 10) &&
+                        (p.expired_time || '').slice(0, 10) !== (p.cycle_end || '').slice(0, 10);
+        const endTip = endDiff
+          ? ' title="周期结束 ' + (p.cycle_end || '') + '；服务端记录的实际失效时刻是 ' + p.expired_time +
+            ' —— 这批提前用尽，本页按实际失效时刻排序"'
+          : '';
         return '<tr class="pd-row' + (due ? ' ' + due.cls : '') + '" data-idx="' + idx + '" title="点击查看这一批的完整明细">' +
-               '<td class="num">' + (p.cycle_end || '-') + '</td>' +
-               '<td><span class="tag ' + tag + '">' + (p.status_label || '-') + '</span>' + dueTagHtml(due) + '</td>' +
+               '<td class="num"' + endTip + '>' + (p.cycle_end || '-') + '</td>' +
+               '<td><span class="tag ' + tag + '">' + (p.status_label || p._how || '-') + '</span>' + dueTagHtml(due) + '</td>' +
                '<td class="num">' + (p.remain || 0).toFixed(2) + '</td>' +
                '<td class="num">' + (p.used || 0).toFixed(2) + '/' + (p.size || 0).toFixed(2) + '</td>' +
                '<td>' + (p.name || '-') + '</td>' +
                '<td class="num">' + waste + '</td></tr>';
       }).join('');
       const emptyMsg = list.length ? '无匹配批次'
-        : (isL3 ? '暂无数据（资源接口不可用）'
-                : (srcBad ? '暂无数据（包明细接口未取到）—— 原因见上方数据源说明'
-                          : '接口已返回，这一页签确实没有批次（0 条）'));
+        : (isPending ? '暂无数据（资源接口不可用）'
+                     : (srcBad ? '暂无数据（包明细接口未取到）—— 原因见上方数据源说明'
+                               : '接口已返回，确实没有已结束的批次（0 条）'));
       document.getElementById('lc-tbody').innerHTML = body || '<tr><td colspan="6" class="empty">' + emptyMsg + '</td></tr>';
     });
 
@@ -2354,30 +3081,34 @@
     const si = lcSourceInfo(kind);
     const srcEl = document.getElementById('lc-src');
     if (srcEl) {
-      const why = (kind === 'expired' && wa.error) ? wa.error : (h6.detail || '包明细接口不可用');
-      srcEl.className = 'lc-src' + (srcBad ? ' src-bad' : '');
+      const why = wa.error || h6.detail || '包明细接口不可用';
+      srcEl.className = 'lc-src' + ((srcBad || srcPartial) ? ' src-bad' : '');
       srcEl.innerHTML = '<span class="src-badge"><span class="src-dot"></span>' + si.badge + '</span><span>' +
         (srcBad
           ? '<b>本次未取到</b>：' + String(why).slice(0, 140) +
             ' —— 下表为空是<b>取数失败</b>，不是没有批次。点顶部「积分批次 ↻」重试。'
-          : si.txt) + '</span>';
+          : (srcPartial
+            ? '<b>只取到一部分</b>：' + String(why).slice(0, 110) +
+              ' —— 下表里只有资源接口报「已用完」的批次，全部<b>已过期</b>记录都缺（它们的浪费数才是大头）。点顶部「积分批次 ↻」重试。'
+            : si.txt)) + '</span>';
     }
 
     const hint = document.getElementById('lc-hint');
-    if (kind === 'pending') {
-      hint.innerHTML = '注：本页签只含<b>未过期</b>批次（资源接口不返回已过期包），按到期时间升序 —— 用途是「下一步该先用哪批」。' +
+    if (isPending) {
+      hint.innerHTML = '注：本页签只列<b>还有余额</b>的批次（资源接口不返回已过期包），按到期时间升序 —— 用途是「下一步该先用哪批」。' +
         '其中「套餐用量」是订阅型资源（按<b>本周期</b>计量），包明细接口不返回它，所以这一行没有「浪费」与包码；' +
-        '已过期批次见<b>「已过期」</b>页签（服务端权威口径，含浪费归因）。';
-    } else if (kind === 'valid') {
-      hint.textContent = '注：数据来自服务端包明细接口（权威口径），状态 0=有效、3=到期前已用完。点击任意一行看该批完整明细（包码 / 容量类型 / 服务端失效时刻）。';
+        '已烧光 / 已作废的批次见<b>「已结束」</b>页签（含服务端浪费归因）。';
     } else {
       const byMonth = wa.by_month || {};
       const parts = Object.keys(byMonth).sort().map(function (m) { return m + ' ' + byMonth[m].toFixed(0); });
-      hint.textContent = '注：已过期批次按到期时间倒序，浪费 = 到期时未用完的剩余积分。按到期月分布：' + (parts.length ? parts.join(' · ') : '—') + '。点击任意一行看该批完整明细。';
+      hint.innerHTML = '注：本页签含两类批次 —— <b>已过期</b>（钱白扔了，浪费列有数）与<b>已用完</b>（未到期就烧光，没有浪费）。' +
+        '按到期时间倒序。浪费 = 到期时未用完的剩余积分（服务端直出，非本地推算）' +
+        (parts.length ? '；按到期月分布：' + parts.join(' · ') : '') +
+        '。点击任意一行看该批完整明细；仅资源接口有的批次（套餐用量 / 体验版）只能开简版。';
     }
 
-    // 假期汇总只属于「待用清单」（待办）；另外两个页签是回顾
-    renderLcHolidayNote(kind === 'pending');
+    // 假期汇总只属于「待用」（待办）；「已结束」是回顾，再提醒也没用了
+    renderLcHolidayNote(isPending);
   }
 
   // ---- 单批明细弹窗 ----
@@ -2399,8 +3130,8 @@
            p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
   }
 
-  // from：从哪个页签点进来的。同一批包可能从「待用清单」或「有效期内」进入，
-  // 弹窗标题若一律写「有效期内页签」，用户会以为自己点错了行。
+  // from：从哪个页签点进来的。同一批包可能从「待用」或「已结束」进入，
+  // 弹窗标题若一律写成一个页签名，用户会以为自己点错了行。
   function openPkgDetail(p, from) {
     if (!p) return;
     const size = p.size || 0, used = p.used || 0, remain = p.remain || 0;
@@ -2430,8 +3161,8 @@
         '</div>' +
         '<div class="pd-sub">' +
           (from === 'pending'
-            ? '从「待用清单」进入 · 同一批在包明细接口（L6）里的完整记录'
-            : (p.kind === 'expired' ? '已过期页签' : '有效期内页签') + ' · 数据来自包明细接口（L6 权威口径）') +
+            ? '从「待用」进入 · 同一批在包明细接口（L6）里的完整记录'
+            : (p._how === '已过期' ? '已过期批次' : '已用完批次') + ' · 数据来自包明细接口（L6 权威口径）') +
         '</div>' +
         '<div class="pd-grid">' + rows.map(function (r) {
           return '<div class="pd-k">' + r[0] + '</div><div class="pd-v ' + r[2] + '">' + r[1] + '</div>';
@@ -2467,7 +3198,7 @@
     });
   }
 
-  // 「待用清单」的行来自资源接口（11 字段），包明细接口（17 字段）里可能也有同一批。
+  // 「待用」的行来自资源接口（11 字段），包明细接口（17 字段）里可能也有同一批。
   // 有 → 直接开完整明细（同一个包，不该因为从哪个页签点进来就少几个字段）；
   // 没有 → 只有订阅型资源会出现，开简版并说明原因，而不是装作没有这一批。
   function l6Counterpart(p) {
@@ -2482,6 +3213,8 @@
   function openPendingDetail(p) {
     if (!p) return;
     const size = p.size || 0, used = p.used || 0, remain = p.remain || 0;
+    // 同一批包可能从「待用」或「已结束」点进来：余额归零的那种，说「尚未到期」就不对了
+    const burntOut = remain <= 0;
     const rows = [
       ['状态', p.status + '（资源接口 · 前端按余额与到期时间判定）', ''],
       ['剩余', remain.toFixed(2) + ' 积分', 'num'],
@@ -2490,7 +3223,7 @@
       ['到期时间', p.cycle_end || '—', ''],
       ['类型', p.label || '—', ''],
       ['计量口径', p.cycle_based ? '本周期（订阅型，与官网「套餐与用量」一致）' : '累计', ''],
-      ['浪费', '—（尚未到期）', ''],
+      ['浪费', burntOut ? '—（未到期就烧光，没有作废损失）' : '—（尚未到期）', ''],
     ];
     const mask = document.createElement('div');
     mask.className = 'expiry-mask';
@@ -2500,7 +3233,7 @@
           '<div class="pd-name">' + (p.name || '（无名称资源包）') + '</div>' +
           '<button class="pd-x" id="pd-close" title="关闭（Esc）">×</button>' +
         '</div>' +
-        '<div class="pd-sub">待用清单 · 数据来自资源接口（L3）</div>' +
+        '<div class="pd-sub">数据来自资源接口（L3）</div>' +
         '<div class="pd-grid">' + rows.map(function (r) {
           return '<div class="pd-k">' + r[0] + '</div><div class="pd-v ' + r[2] + '">' + r[1] + '</div>';
         }).join('') + '</div>' +
@@ -2523,7 +3256,7 @@
   // 把「假期内到期」的逐条标记汇总成一句话。
   // 为什么要汇总：表里只是逐行的紫色标记，而"有几批、共多少积分、集中在哪个假期"
   // 得自己数行 —— 汇总直接回答"我该做什么"，也让工作日历这件事在页面上看得见。
-  // 只在「待用清单」显示：另外两个页签是回顾，不是待办。
+  // 只在「待用」显示：「已结束」是回顾，不是待办。
   function renderLcHolidayNote(show) {
     const el = document.getElementById('lc-holiday');
     if (!el) return;
@@ -2559,6 +3292,28 @@
     lifecycle: ['sec-lifecycle'],
   };
   const panelState = {};   // panel -> {status:'loading'|'ok'|'error', at, ms, error, static}
+
+  // 加载态说明文案：回答"在等什么、为什么慢"，而不是只转圈。
+  // 两个面板慢的原因不同，共用一句话只会让人以为都在卡同一个接口。
+  const PANEL_WAIT = {
+    requests: { main: '正在取请求级流水', sub: '最近 31 天逐条调用，量大时要几秒' },
+    lifecycle: { main: '正在取积分批次', sub: '资源接口 + 包明细接口，两边到齐才能算浪费' },
+  };
+
+  // 秒数只在真的慢了才报：1 秒内结束的加载，"已等 1 秒"只会让人多看一眼。
+  let skTicker = null;
+  function startSkTicker() {
+    if (skTicker) return;
+    skTicker = setInterval(function () {
+      const els = document.querySelectorAll('.panel-skeleton .sk-elapsed');
+      // 骨架被撤掉了就收工，别留一个永远在跑的计时器
+      if (!els.length) { clearInterval(skTicker); skTicker = null; return; }
+      els.forEach(function (e) {
+        const s = Math.floor((Date.now() - (Number(e.dataset.t0) || Date.now())) / 1000);
+        e.textContent = s >= 2 ? '· 已等 ' + s + ' 秒' : '';
+      });
+    }, 400);
+  }
 
   function hms(s) { return (s || '').slice(11, 19) || ''; }
 
@@ -2845,8 +3600,15 @@
 
   function setPanelSkeleton(panel, on) {
     if (!on) {
-      document.querySelectorAll('.panel-skeleton').forEach(function (n) { n.remove(); });
-      document.querySelectorAll('.panel-err').forEach(function (n) { n.remove(); });
+      // 只清自己这一块。原先是无差别 querySelectorAll：两个面板并行加载时，
+      // 先完成的那个会把另一个的骨架和错误条一起删掉，于是它在剩余几百毫秒里
+      // 变成一片空白 —— 比骨架更像"坏了"。现在带上加载说明文字，更不能误删。
+      (PANEL_SECTIONS[panel] || []).forEach(function (id) {
+        const host = document.getElementById(id);
+        if (!host) return;
+        host.querySelectorAll('.panel-skeleton').forEach(function (n) { n.remove(); });
+        host.querySelectorAll('.panel-err').forEach(function (n) { n.remove(); });
+      });
       return;
     }
     if (renderedPanels[panel]) return;   // 已上屏过：只在状态条上体现加载，不覆盖已有内容
@@ -2857,8 +3619,16 @@
     }
     const tbody = document.getElementById(panel === 'requests' ? 'req-tbody' : 'lc-tbody');
     if (tbody && !tbody.innerHTML.trim()) {
+      const w = PANEL_WAIT[panel];
       tbody.innerHTML = '<tr><td colspan="6"><div class="panel-skeleton">' +
-        '<div class="sk-line"></div><div class="sk-line"></div><div class="sk-line"></div></div></td></tr>';
+        (w
+          ? '<div class="sk-msg"><i class="sk-dot"></i><span>' + w.main + '</span>' +
+            '<span class="sk-sub">' + w.sub + '</span>' +
+            '<span class="sk-elapsed" data-t0="' + Date.now() + '"></span></div>'
+          : '') +
+        '<div class="sk-line"></div><div class="sk-line w2"></div><div class="sk-line w3"></div>' +
+        '</div></td></tr>';
+      startSkTicker();
     }
   }
 
@@ -2995,10 +3765,18 @@
         // 早先这里统一提示「请先运行 render」，在服务掉线时是彻底误导。
         return probeBackend().then(function (mode) {
           if (mode === 'down') {
-            alert('无法加载数据：本地服务未运行。\n\n'
-                  + '请双击桌面「积分工作台」启动器（或运行 python scripts/serve.py）后再试。');
+            uiAlert({
+              tone: 'bad', title: '本地服务未在运行',
+              message: '页面里的数据全部来自本地服务。它会在所有工作台页面关闭约 75 秒后自动退出，'
+                + '所以「页面还开着、服务已没了」是正常现象。',
+              hint: '双击桌面「积分工作台」启动器重新打开；或运行 `python scripts/serve.py` 后刷新本页。'
+            });
           } else {
-            alert('无法加载数据：' + (e.message || e));
+            uiAlert({
+              tone: 'bad', title: '无法加载数据',
+              message: (e && e.message) || String(e),
+              hint: '服务在运行，但这次请求出错。可点右上角 ↻ 重试；持续失败就看一眼服务日志。'
+            });
           }
         });
       })
@@ -3069,16 +3847,16 @@
     tabs.querySelectorAll('button').forEach(function (b) { b.classList.remove('active'); });
     btn.classList.add('active');
     lcState.kind = kind;
-    // 切页签清空搜索：三个页签的「类型」字段不是同一套（L3 是 label、L6 是 name / 包码），
-    // 留着上一个页签的关键词只会造出「切过去就空了」的假故障。
+    // 切页签清空搜索：两个页签的「类型」字段不是同一套（待用是 L3 的 label＋包名，
+    // 已结束以 L6 的包名 / 包码为主），留着上一个页签的关键词只会造出「切过去就空了」的假故障。
     lcState.filter = '';
     const inp = document.getElementById('lc-search');
     if (inp) inp.value = '';
     if (DATA) renderLifecycle(DATA);
   }
 
-  // 「已过期批次」不再有独立入口 —— 它现在就是「积分批次」面板的第三个页签，
-  // 过期数据与待用清单在同一张表里，不必再跨面板跳转。
+  // 「已过期批次」不再有独立入口 —— 它就是「积分批次」面板「已结束」页签里的主体，
+  // 与已用完的批次同表，不必再跨面板跳转。
 
   // 消耗明细：搜索 / 导出
   document.getElementById('req-search').addEventListener('input', function () {
@@ -3104,10 +3882,15 @@
     const idx = parseInt(tr.getAttribute('data-idx'), 10);
     const row = (lcState.rows || [])[idx];
     if (!row) return;
-    if (lcState.kind !== 'pending') { openPkgDetail(row, lcState.kind); return; }
-    // 待用清单的行：优先换用包明细接口里的同一批（字段更全），没有才开简版
-    const full = l6Counterpart(row);
-    if (full) openPkgDetail(full, 'pending'); else openPendingDetail(row);
+    // 两个页签都可能点到 L3 来源的行（「已结束」里那批只有资源接口有的），
+    // 所以按行的来源分派，而不是按当前页签 —— 否则这些行点开会是空弹窗。
+    if (lcState.kind === 'pending' || row._src === 'l3') {
+      // L3 行：优先换用包明细接口里的同一批（字段更全），没有才开简版
+      const full = l6Counterpart(row);
+      if (full) openPkgDetail(full, lcState.kind); else openPendingDetail(row);
+      return;
+    }
+    openPkgDetail(row, lcState.kind);
   });
   document.getElementById('lc-tabs').addEventListener('click', function (e) {
     const btn = e.target.closest('button[data-lc]'); if (!btn) return;
@@ -3127,16 +3910,19 @@
         return [p.cycle_end || '', p.status, (p.remain || 0).toFixed(2), (p.used || 0).toFixed(2),
                 (p.size || 0).toFixed(2), p.label || '', p.name || '', p.cycle_based ? '本周期' : '累计'];
       });
-      exportCSV('积分批次_待用清单.csv',
+      exportCSV('积分批次_待用.csv',
         ['到期时间', '状态', '剩余', '已用', '总量', '类型', '资源包', '计量口径'], rows);
       return;
     }
+    // 「已结束」是双源的：L3 那几行没有状态码 / 浪费，写空会让人以为是漏了，写「—」才是实情
     const rows = list.map(function (p) {
-      return [p.cycle_end || '', p.status_label || '', (p.remain || 0).toFixed(2), (p.used || 0).toFixed(2),
-              (p.size || 0).toFixed(2), p.name || '', (p.wasted || 0).toFixed(2)];
+      return [p.cycle_end || '', p._how || p.status_label || '', (p.remain || 0).toFixed(2), (p.used || 0).toFixed(2),
+              (p.size || 0).toFixed(2), p.name || '',
+              p._src === 'l3' ? '—' : (p.wasted || 0).toFixed(2),
+              p._src === 'l3' ? '资源接口 L3' : '包明细接口 L6'];
     });
-    exportCSV('积分批次_' + (kind === 'valid' ? '有效期内' : '已过期') + '.csv',
-      ['到期时间', '状态', '剩余', '已用', '总量', '类型', '浪费'], rows);
+    exportCSV('积分批次_已结束.csv',
+      ['到期时间', '状态', '剩余', '已用', '总量', '类型', '浪费', '数据源'], rows);
   });
 
   document.getElementById('export-batch').addEventListener('click', function () {
@@ -3144,7 +3930,7 @@
     const rows = (DATA.expiry_list || []).map(function (p) {
       return [p.cycle_end || '', p.status, p.remain.toFixed(2), p.used.toFixed(2), p.size.toFixed(2), p.label, p.name || ''];
     });
-    exportCSV('积分批次_待用清单.csv', ['到期时间', '状态', '剩余', '已用', '总量', '类型', '资源包'], rows);
+    exportCSV('积分批次_全部批次.csv', ['到期时间', '状态', '剩余', '已用', '总量', '类型', '资源包'], rows);
   });
   document.getElementById('export-usage').addEventListener('click', function () {
     if (!DATA) return;
@@ -3157,20 +3943,38 @@
   // 创建快捷方式（桌面 / 开始菜单）：需经本地服务（serve.py），file:// 下不可用
   function createShortcut(target) {
     if (location.protocol === 'file:') {
-      alert('此功能需通过本地服务使用。\n\n请运行：python scripts/serve.py\n然后访问 http://127.0.0.1:8090');
+      uiAlert({
+        tone: 'info', title: '创建快捷方式需要本地服务',
+        message: '快捷方式由本地服务调用系统接口创建，静态页面做不到。',
+        hint: '运行 `python scripts/serve.py`，然后访问 http://127.0.0.1:8090 再试。'
+      });
       return;
     }
     fetch('/api/create-shortcut?target=' + encodeURIComponent(target), { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (res.ok) { alert('已创建快捷方式：\n' + res.message); }
-        else { alert('创建失败：\n' + res.message); }
+        if (res.ok) {
+          toast('已创建快捷方式：' + (res.message || ''), 'ok');
+        } else {
+          uiAlert({
+            tone: 'bad', title: '创建快捷方式失败',
+            message: res.message || '未知原因',
+            hint: '可手动把启动器发送到桌面：右键 `launcher.py` → 发送到 → 桌面快捷方式。'
+          });
+        }
       })
-      .catch(function (e) { alert('无法连接服务：' + (e.message || e) + '\n\n请先运行：python scripts/serve.py'); });
+      .catch(function (e) {
+        uiAlert({
+          tone: 'bad', title: '无法连接本地服务',
+          message: (e && e.message) || String(e),
+          hint: '先运行 `python scripts/serve.py`（或双击桌面启动器）再试。'
+        });
+      });
   }
   document.getElementById('shortcut-desktop').addEventListener('click', function () { createShortcut('desktop'); });
   document.getElementById('shortcut-startmenu').addEventListener('click', function () { createShortcut('startmenu'); });
   document.getElementById('alert-settings').addEventListener('click', openAlertSettings);
+  document.getElementById('auto-checkin').addEventListener('click', openAutoCheckin);
 
   // ---- 用户菜单（账户与设置）----
   // 键盘 / 鼠标 / 点外部 / Esc 四条关闭路径；打开时从页头版本号取当前版本，避免多一处同步点
@@ -3260,19 +4064,36 @@
     const btn = this;
     if (btn.disabled) return;
     if (location.protocol === 'file:') {
-      alert('此功能需通过本地服务使用。\n\n请运行：python scripts/serve.py\n然后访问 http://127.0.0.1:8090');
+      uiAlert({
+        tone: 'info', title: '签到需要本地服务',
+        message: '签到要驱动浏览器完成，静态页面没有这个能力。',
+        hint: '运行 `python scripts/serve.py`，然后访问 http://127.0.0.1:8090 再试。'
+      });
       return;
     }
     btn.disabled = true; btn.textContent = '签到中…';
     fetch('/api/checkin', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (!res.ok) { alert('签到失败：\n' + (res.error || '未知错误')); return; }
-        alert(res.message || '签到成功');
+        if (!res.ok) {
+          uiAlert({
+            tone: 'bad', title: '签到失败',
+            message: res.error || '未知错误',
+            hint: res.hint || '连续失败时先在工作台点一次「重新登录」，再重试签到。'
+          });
+          return;
+        }
+        toast(escHtml(res.message || '签到成功'), 'ok');
         // 签到成功后立即重新拉取数据并刷新界面（按钮显示「刷新中…」作为可见反馈）
         return refreshData(true);
       })
-      .catch(function (e) { alert('无法连接服务：' + (e.message || e) + '\n\n请先运行：python scripts/serve.py'); })
+      .catch(function (e) {
+        uiAlert({
+          tone: 'bad', title: '无法连接本地服务',
+          message: (e && e.message) || String(e),
+          hint: '先运行 `python scripts/serve.py`（或双击桌面启动器）再试。'
+        });
+      })
       .finally(function () { syncCheckinBtn(DATA); });
   });
 
@@ -3291,6 +4112,66 @@
   syncSticky();
   window.addEventListener('resize', syncSticky);
 
+  // ---- 锚点对齐守护 ----
+  // 首次进入时目标面板还只是 3 行骨架，页面总高度远小于加载完成后 —— scrollIntoView
+  // 只能滚到「当时的页面底部」。等数据陆续到达、面板长高，滚动位置就不再对应目标：
+  // 实测点「消耗明细」，数据到齐后目标停在视口下方 1407px，看起来就是锚点失灵。
+  // 处理：点击后进入守护窗口，窗口内的高度变化都把目标重新贴回吸顶线；
+  // 只要还有面板在取数就续期，用户一旦自己滚（滚轮 / 触摸 / 翻页键）立刻退出，不跟人抢滚动条。
+  let anchorId = null, anchorUntil = 0, anchorTimer = null, anchorMuteUntil = 0, anchorStart = 0;
+
+  function anchorOffsetPx() {
+    const s = document.getElementById('sec-overview');
+    return (s && parseFloat(s.style.scrollMarginTop)) || 130;
+  }
+
+  function stopAnchorGuard() {
+    anchorId = null;
+    anchorUntil = 0;
+    if (anchorTimer) { clearInterval(anchorTimer); anchorTimer = null; }
+  }
+
+  // 把目标贴回吸顶线。贴不上（页面还不够长）就直接返回 —— 否则每 100ms 空转一次
+  function alignAnchor() {
+    if (!anchorId) return;
+    const el = document.getElementById(anchorId);
+    if (!el) { stopAnchorGuard(); return; }
+    const delta = el.getBoundingClientRect().top - anchorOffsetPx();
+    if (Math.abs(delta) < 2) return;
+    const maxY = document.documentElement.scrollHeight - window.innerHeight;
+    if (delta > 0 && window.scrollY >= maxY - 1) return;
+    window.scrollBy(0, delta);
+  }
+
+  function startAnchorGuard(id) {
+    anchorId = id;
+    anchorStart = performance.now();
+    anchorUntil = anchorStart + 4000;
+    // 平滑滚动还没走完时不插手：两个滚动同时发力会互相打断，观感比不动更糟
+    anchorMuteUntil = performance.now() + 450;
+    if (anchorTimer) clearInterval(anchorTimer);
+    anchorTimer = setInterval(function () {
+      if (performance.now() > anchorUntil) { stopAnchorGuard(); return; }
+      // 硬上限：接口一直转圈时下面会无限续期，这里必须有一条尽头
+      if (performance.now() - anchorStart > 20000) { stopAnchorGuard(); return; }
+      // 还有面板在取数 → 布局还会再变，这时候收工等于没守护
+      if (PANELS.some(function (p) { return (panelState[p] || {}).status === 'loading'; })) {
+        anchorUntil = performance.now() + 1200;
+      }
+      if (performance.now() < anchorMuteUntil) return;
+      alignAnchor();
+    }, 100);
+  }
+
+  // 用户自己动手了就别再把人拉回去（程序化滚动不产生这些事件，不会误判）
+  ['wheel', 'touchstart'].forEach(function (ev) {
+    window.addEventListener(ev, function () { if (anchorId) stopAnchorGuard(); }, { passive: true });
+  });
+  window.addEventListener('keydown', function (e) {
+    if (!anchorId) return;
+    if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].indexOf(e.key) >= 0) stopAnchorGuard();
+  });
+
   // 吸顶导航
   let navScrollingTo = null;   // 点击导航触发的程序化滚动目标（平滑滚动期间锁定高亮，避免来回跳）
   let navScrollTimer = null;   // 兜底定时器：异常时强制清除锁定
@@ -3306,17 +4187,20 @@
     clearTimeout(navScrollTimer);
     navScrollTimer = setTimeout(function () { navScrollingTo = null; }, 1500);
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    startAnchorGuard(target.id);   // 数据随后到达、面板长高时，把目标重新贴回吸顶线
   });
   const navLinks = document.querySelectorAll('#nav-inner a');
+  // 顺序必须与页面里的 DOM 顺序一致：updateActiveNav 是「遍历一遍、谁最后满足条件谁胜出」，
+  // 靠的是遍历顺序而不是坐标大小。映射顺序与 DOM 错开时，滚动会高亮到上方那个区块的名字上。
   const sectionToNav = {
     'sec-overview': '数据概览',
     'sec-charts': '消耗分析',
     'sec-heat': '消耗分析',
     'sec-ledger': '收支账本',
-    'sec-requests': '消耗明细',
-    'sec-sessions': '会话消耗',
-    'sec-waste': '收支账本',
     'sec-lifecycle': '积分批次',
+    'sec-waste': '收支账本',
+    'sec-sessions': '会话消耗',
+    'sec-requests': '消耗明细',
   };
   function updateActiveNav() {
     // 吸顶偏移必须与 syncSticky 动态设置的 scroll-margin-top 保持一致
@@ -3333,6 +4217,13 @@
         return; // 滚动未到位，保持当前高亮不跳
       }
     }
+    // 锚点守护期间：高亮跟着点击目标走。
+    // 此刻按坐标算会先亮到上面那一段（目标还在视口下方），等守护把页面补滚过去再跳回来 —— 闪一下。
+    if (anchorId) {
+      const want = sectionToNav[anchorId];
+      if (want) navLinks.forEach(function (a) { a.classList.toggle('active', a.textContent.trim() === want); });
+      return;
+    }
     let activeNav = null;
     Object.keys(sectionToNav).forEach(function (id) {
       const el = document.getElementById(id);
@@ -3342,7 +4233,7 @@
     });
     // 滚到页面底部时强制激活最后一个 section，避免其顶部 > offset 无法触发
     if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 8) {
-      activeNav = '积分批次';
+      activeNav = '消耗明细';
     }
     if (activeNav) {
       navLinks.forEach(function (a) { a.classList.toggle('active', a.textContent.trim() === activeNav); });
@@ -3355,11 +4246,16 @@
   }, { passive: true });
   updateActiveNav();
 
+  let rszTimer = null;
   window.addEventListener('resize', function () {
-    ['chart-daily', 'chart-cum', 'chart-heat-expense', 'chart-heat-income'].forEach(function (id) {
+    ['chart-daily', 'chart-cum'].forEach(function (id) {
       const inst = echarts.getInstanceByDom(document.getElementById(id));
       if (inst) inst.resize();
     });
+    // 点阵日历的格子大小是按容器实测宽度算出来的，记在 grid 的 width/height 上，
+    // 单纯 resize 实例只会把它整体拉伸、格子变扁 —— 必须按新宽度重绘整块。
+    clearTimeout(rszTimer);
+    rszTimer = setTimeout(function () { if (DATA) renderAll(DATA); }, 320);
   });
 
   // 初始渲染
@@ -3401,6 +4297,10 @@
       sb.style.display = 'block';
     });
   }
+
+  // 自动签到状态：只读一次轻量接口，用于菜单徽章与签到按钮提示。
+  // 不阻塞首屏（面板数据另有通道），失败静默 —— 不能因为查不到开关状态就打扰用户。
+  if (!isStaticMode()) acRefreshState();
 
   // 页面存活心跳：告知服务端「工作台还开着」。关闭本页（标签页/窗口）后，
   // 服务端超时未收到心跳会自动退出后台（服务 + 浏览器桥一并清理）。

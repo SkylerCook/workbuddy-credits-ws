@@ -192,6 +192,13 @@ user-data-dir 的 cookie 加密互不兼容（各自持有/轮换 `os_crypt` 密
 - **不导出空文件**（v1.7.23）：表格为空时导出会得到一个「只有表头」的 CSV，
   下载成功、打开空白，用户会认为「导出没问题，只是没数据」。空表一律不生成文件并给出提示；
   正常导出回报行数，让「导出了几行」可核对。
+- **禁止原生 `alert` / `confirm` / `prompt`**（v1.7.24）：全工作台统一走
+  `uiDialog()` / `uiAlert()` / `uiConfirm()`（返回 `Promise<boolean>`）+ `toast()`。
+  原因不是好看：① 原生 `alert` **阻塞 JS 绘制** —— 代码里改了按钮文案也刷不出来，
+  实测出现过按钮卡死在「保存中…」；② 无法跟随主题、无层级、不能放代码片段与多段说明；
+  ③ `confirm` 是同步阻塞，改写过程中会把流程切成回调地狱（改用 `async` + `await` 最省事）。
+  换行用 `\n`（`.dlg-msg` 有 `white-space: pre-line`），行内代码用反引号包住（`uiRich()` 转 `<code>`）。
+  **轻提示（可忽略的结果）用 `toast`，需要人停下来看或用代码指引的才用 `uiDialog`。**
 
 ## 五、工作日历（v1.7.0）
 
@@ -326,7 +333,184 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
 - 行尾权威是 `.gitattributes`（eol=lf）；需要时用
   `git add --renormalize .` + 检出刷新
 
-## 七、发布流程
+## 七、自动签到（v1.7.24）
+
+**为什么是 Windows 计划任务，而不是服务里的定时器**
+
+服务有闲时看门狗：页面全部关闭约 75 秒后自己退出（v1.7.13 收紧过）。定时器活在服务进程里，
+就意味着「用户关掉页面 = 自动签到失效」，而且**不会报错** —— 只表现为开关开着、从没签上。
+计划任务是唯一与「工作台开不开」解耦的宿主。代价：系统里多一个任务条目（用户可在任务计划程序里看到）。
+
+**任务定义**（`scripts/auto_checkin.py` → `build_xml`）
+
+| 项 | 值 | 理由 |
+|---|---|---|
+| 触发 | 每天 `09:30`（可在工作台改） | 上班时段签，奖励当天到账 |
+| `StartWhenAvailable` | true | 关机 / 休眠错过 → 下次**登录**后补跑（InteractiveToken 没有会话时不会跑） |
+| `RestartOnFailure` | 3 次 / 10 分钟 | 只在**退出码非零**时触发 |
+| `LogonType` | InteractiveToken | 需要用户的浏览器会话；不要存密码 |
+| `RunOnlyIfNetworkAvailable` | true | 签到必须联网，离线跑只会失败刷重试 |
+
+**退出码是契约**：签成功 / 今日已签 → `exit 0`；失败 → `exit 1`（才会触发重试）。
+写代码时若把失败也 `exit 0`，表现为「每天准时什么都不做」。
+
+**四条硬约束**
+
+1. **`pythonw` 下 `sys.stdout` 为 `None`** —— 任何 `print` 都 `AttributeError` 崩进程，
+   而计划任务里的崩溃**完全静默**（任务计划程序只留退出码）。入口第一件事是
+   `_takeover_stdout()` 把输出接到 `auto_checkin_run.log`；捕获 `cmd_checkin` 输出时
+   还要滤掉 `[session]` 这类桥日志，否则会混进弹窗的「上次运行」。
+2. **不能与工作台抢浏览器 profile** —— 桥用按浏览器分目录的**持久化** profile。
+   故 `run_once` 先读 `serve_state.json` 的 `port` 探活：服务在跑就调它的 `/api/checkin`
+   （`via: service`），没在跑才自己拉 Chrome（`via: direct`，完事必须 `bridge_close()`，
+   否则计划任务每跑一次留一个 Chrome）。
+3. **`schtasks /XML` 只认 UTF-16 带 BOM** —— 用 `open(path, "w", encoding="utf-16")`。
+   写成 UTF-8 会报「任务 XML 格式不正确」，错误信息完全不指向编码。
+4. **`<Settings>` 里不能出现 `DisallowStartOnRemoteAppSession` / `UseUnifiedSchedulingEngine`**
+   —— 本机解析器**直接拒收**：`错误: 任务 XML 包含意外节点。(38,7):DisallowStartOnRemoteAppSession:`
+   （补上配套的 `UseUnifiedSchedulingEngine` 后换成它被拒）。这两个节点只影响远程 App 会话，
+   跟定时签到无关，已从模板移除。**不要再从网上抄「完整版」任务 XML** —— 抄来就用会卡在这一步。
+   校验办法见下（不依赖 schtasks）。
+
+**XML 校验器（schtasks 被拦时也能用）**
+
+```
+PowerShell> Register-ScheduledTask -TaskName Probe -Xml ([xml](Get-Content -Raw -Encoding Unicode <xml路径>)).OuterXml -Force
+```
+`Register-ScheduledTask` 走 Task Scheduler COM，与 `schtasks /Create /XML` **共用同一个 XML 解析器**
+（报错文案一模一样，只是行列号指向整个字符串而不是文件行），所以「COM 能注册 = schtasks 也能注册」。
+验证完记得 `Unregister-ScheduledTask -TaskName Probe`。想连动作一起验，就 `Start-ScheduledTask`
+再去看 `auto_checkin_log.json` 有没有新记录 —— 这条能验出 pythonw 路径 / 参数引号 / 工作目录对不对，
+而这三样出错时计划任务是**静默失败**的。
+
+**弹窗里的失败提示不要用原生 `alert`**：`alert` 会阻塞绘制，代码里把按钮文案改回「保存」
+也刷不出来，用户看到的是卡在「保存中…」的死按钮。改成弹窗内联的 `.ac-warn.bad` 提示块；
+失败时同时把开关 `acResetToggle()` 拨回真实状态，否则「已开启」与「未注册」并列自相矛盾。
+
+**任务存在性必须三态**（`task_state()` → `True / False / None`）
+
+`schtasks /Query` 在权限不足、被安全软件拦、schtasks 不可用时同样返回非零，与
+「任务确实不存在」无法区分。第一版用 `rc == 0` 判，界面把「查询失败」写成了「未注册」——
+又一次「读不到被画成没有」。现在 `None` 表示查不到并带 `task_query_error` 原文，
+前端显示「⚠ 查询失败：<原因>」，`status()` 里 `enabled`（用户意图）与 `verified`（系统实况）分开。
+
+**「工具起不来」≠「工具拒绝」**（`_run_schtasks` → `rc == -1`）
+
+`CreateProcess` 失败（被安全软件/系统策略拦截、组件缺失）时我们只能自己造返回值。
+若与 schtasks 真的返回非零混成一个 `rc != 0`，界面就会把「schtasks 根本没启动」写成
+「注册被拒」—— 用户照着「权限不足」去折腾，方向完全错。现在 `rc == -1` 表示工具本身
+没起来，`_fail_payload()` 单独给措辞与 `hint`；`task_state()` 也必须先判 `rc == -1`
+再做关键词匹配，否则「找不到 schtasks.exe」里的「找不到」会被判成「任务不存在」。
+
+**schtasks 走绝对路径，不靠 PATH**（`_schtasks_exe()`）
+
+PATH 会被父进程改写（工具垫片目录常被插到最前），解析到的可能不是系统那个。
+取 `%SystemRoot%\System32\schtasks.exe`，32 位进程回退 `Sysnative`，都找不到才退回裸名。
+
+**真实案例（v1.7.24 交付时）**：用户在页面点「开启」，弹出
+`注册计划任务失败（schtasks 返回 1） / 调用 schtasks 失败：[WinError 5] 拒绝访问`。
+根因不是权限 —— 当时 8090 上的服务是**从受限执行环境里拉起来的**，继承了拦截垫片，
+连 `schtasks.exe` 都起不来。教训：**改完这类依赖系统工具的功能，先确认服务是自己
+（用户）启动的进程，再让用户点按钮**，否则验的是测试环境而不是产品。
+
+**关闭的顺序不能反**：先写配置 `enabled=false`，再尽力删任务。反过来会在「查不到任务」
+的环境里必然失败，把一次「已关闭」误报成「关闭失败」，用户卡在关不掉。无法确认删除时
+返回 `warning`（开关已关，但旧任务可能仍存在）。
+
+**排查**（按顺序看）
+
+1. 弹窗「计划任务」那行：`schtasks 被拦截，无法启动` = 工具本身起不来（安全软件/策略，与权限无关）；
+   `查询失败：<原文>` = 调通了但被拒（多为权限）。两者处理方式完全不同，别混着查
+2. `~/.workbuddy/workbuddy-credits-data/auto_checkin_run.log` —— 每次运行的完整输出（含桥日志）
+3. `auto_checkin_log.json` —— `last` + 最近 60 条 `{at, result, via, message}`
+4. 任务计划程序 → 任务名称 `WorkBuddyCreditsAutoCheckin` → 「上次运行结果」
+5. 弹窗里「立即试跑一次」走 `schtasks /Run`，与定时触发是同一套动作定义 ——
+   注册成功 ≠ 能跑起来，这一步就是为此存在
+
+## 八、工作台渲染踩坑（v1.7.25）
+
+> 这一节记的是**图表库 / CSS / 滚动定位**层面的通用教训，与积分业务无关，
+> 但改任何一块面板都会再遇到。改 `dashboard.html` 前值得先扫一遍。
+
+### 8.1 ECharts 坐标系选型：calendar 不适合做点阵
+
+`calendar` 坐标系的横轴按周、纵轴按星期，**两轴刻度宽高完全独立**，
+没有任何 `itemStyle` 参数能让格子变方 —— 实测画出来是 33×15 的扁横条。
+
+要做 GitHub 式贡献点阵，正确的是 `scatter` + 两条 `category` 轴：
+
+- `symbolSize: [cell, cell]` 直接是**像素值**，与轴刻度宽度解耦；
+- `grid.height = 7 × 列宽`，让 y 方向一个单位等于 x 方向一个单位 ⇒ 格子天然正方；
+- 容器高度用 `el.style.height` 精确写入，不要靠 `grid` 自适应（会随列距被撑高）；
+- 矩阵必须补成**完整矩形**：起点回退到首周周一（`-((getDay()+6)%7)`），否则首周残缺、
+  整块错位；
+- 两张图（消耗 / 收入）**共用同一条时间轴**，各自算起点会上下错开半格；
+- 色阶上限取 **P90 而非 max**：一个单日尖峰会压平整个梯度，四级色阶退化成两级。
+
+### 8.2 `calc()` 里的比例变量必须无单位
+
+```css
+width: calc(var(--w) * 100%);   /* --w: 0.48  ✅  */
+width: calc(var(--w) * 100%);   /* --w: 48%   ❌  */
+```
+
+带 `%` 的字符串进不了 `calc()` 乘法，**不报错**，只是整条规则失效 ——
+表现是「条形长度与轨道对不上」，很容易误判成宽度计算逻辑错了。
+
+### 8.3 滚动高亮靠遍历顺序，不靠坐标
+
+```js
+Object.entries(sectionToNav).forEach(([id, nav]) => {
+  if (section.getBoundingClientRect().top <= offset) activeNav = nav;  // 最后赋值者胜出
+});
+```
+
+`sectionToNav` 的**键顺序必须与 DOM 顺序一致**，否则高亮会固定指向上一个区块。
+调整面板顺序时，三处要一起改：**DOM 顺序、导航锚点 href、`sectionToNav` 键顺序**，
+外加滚动到底时的兜底（`activeNav` 指定最后一项）。
+
+### 8.4 `scrollIntoView` 用的是「那一瞬间」的布局
+
+面板异步加载时，目标面板还是骨架、页面总高不足，`scrollIntoView` 只能滚到当时底部；
+数据到齐后面板长高，滚动位置不再对应（实测偏差 1407px）。
+
+修法是短时**锚点守护**而不是加大延时：
+
+- 4 秒窗口，检测到面板仍 `loading` 就续期 1.2 秒；
+- 静默 450ms（等平滑滚动走完）后再开始每 100ms 对齐；
+- 用户 `wheel / touchstart / 翻页键` 立即 `stop` —— **绝不跟用户抢滚动条**。
+
+### 8.5 CSS 动画时钟在页面繁忙时严重滞后
+
+`opacity: 0` + `animation-delay` 做淡入，实测骨架已显示 600ms 时 `currentTime` 才 200ms，
+`opacity` 仍是 0 —— 表现是「骨架/提示长期不可见」，而 DOM 里明明有。
+**必须让人看见的东西不要用动画入场**，直接显示。同理，用 `animation` 做进度提示也要设上限。
+
+### 8.6 骨架/占位清理必须限定作用域
+
+```js
+document.querySelectorAll('.panel-skeleton').forEach(n => n.remove());  // ❌
+```
+
+多面板并行加载时，一个面板完成就会删掉**另一个**的骨架。
+应按面板的 section 容器限定范围（`PANEL_SECTIONS[panel]`），只清自己那一块。
+
+另外：往列表里**插入前置元素**后，`.item:nth-child(n)` 序号全错。
+宽度这类按位置的样式，用**类名**（`.w2` / `.w3`）而不是 `nth-child`。
+
+### 8.7 状态存 JS 对象，不存 DOM
+
+`reqState` / `lcState` / `panelState` 这类状态对象是唯一真相，渲染只是它的投影。
+筛选必须走**单一过滤入口**（`reqFilterFn`），让搜索 / 导出 / 分页共用同一份过滤结果 ——
+分别实现必然出现「搜出来的和导出的不一致」。
+
+### 8.8 弹窗不要用原生 `alert` / `confirm`
+
+原生 `alert` 阻塞 JS 绘制，表现为「按钮卡在保存中…」；且无法跟随主题、不能放代码片段。
+统一走 `uiDialog / uiAlert / uiConfirm`（Promise 语义）+ `toast`（不打断）。
+判断用哪个：**轻提示走 toast，需要人停下来看或要给命令指引的走弹窗**。
+
+## 九、发布流程
 
 1. `manifest.yaml` 升 version（**必须升** —— 启动器的版本自检靠它，见「环境与踩坑」）
 2. **先写好 README 的 `### vX.Y.Z — 摘要` 段**（Release 正文取自它，见下）
@@ -358,13 +542,13 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
 - ⚠️ **只提示、不改任何本地文件** —— 升级始终由用户显式跑 `python update.py`
   （Release 包 + sha256 校验 + 自动重启服务）。这是刻意的：改动本地文件必须用户触发
 
-## 八、当前状态
+## 十、当前状态
 
 > 每次**发版**后更新这一节。
 > ⚠️ **不要写 commit hash** —— 它每次提交都变，写进来必然过时（写"未提交"同理）。
 > 只记「哪些版本已发布」和「哪些功能已提交、待发版」。
 
-- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10 / v1.7.11 / v1.7.12 / v1.7.13 / v1.7.14 / v1.7.16（含 v1.7.15）/ v1.7.18（含 v1.7.17）/ v1.7.19 / v1.7.23（含 v1.7.20 / v1.7.21 / v1.7.22）
+- **已发布**（tag + CI + Release）：v1.3.0 / v1.3.1 / v1.4.1（含 v1.4.0）/ v1.4.3（含 v1.4.2）/ v1.7.3 / v1.7.4 / v1.7.5 / v1.7.6 / v1.7.7 / v1.7.8 / v1.7.9 / v1.7.10 / v1.7.11 / v1.7.12 / v1.7.13 / v1.7.14 / v1.7.16（含 v1.7.15）/ v1.7.18（含 v1.7.17）/ v1.7.19 / v1.7.23（含 v1.7.20 / v1.7.21 / v1.7.22）/ v1.7.25（含 v1.7.24）
 - **已发布（2026-09-26 一次攒批发，tag v1.7.3 涵盖）**：v1.4.4 ~ v1.7.3
   - v1.4.4 —— 签到卡区分「真实连续」与「活动周期内」＋ 可用天数改 30 天窗口
   - v1.4.5 —— 凭据加密后优雅降级
@@ -562,6 +746,22 @@ soon+urgent 行数 == `at_risk_count`），不靠目测。
   实测：537 条 / 跨 4 天 → 勾选后 3 条 / 仅今日 / 页码 1-1 → 取消恢复 537 条。
   **★ 教训（控件验收必读）**：纯装饰控件在**视觉上完全正常**，只有真去点它才会暴露。
   验收清单里必须有「控件是否真的改变了数据」这一条，不能只看「画面是否正常」。
+- **已发布（v1.7.25，2026-10-24）**：**工作台可读性八项**（纯前端，全在 `dashboard.html`）。
+  ① 消耗/收入热力图从 ECharts `calendar` 改 `scatter` 点阵（正方形格子、共用时间轴、P90 上限）；
+  ② 三列构成区并排 → 竖排，占比条移到独立弹性列（`--w` 传无单位比例）；
+  ③ 明细表提示词单行截断 + 悬浮气泡，路径类降为灰色等宽；
+  ④ 「待用清单 / 有效期内」合并为「待用 / 已结束」（按数据源切，状态按码值分，排序用 `expired_time`）；
+  ⑤⑥ 会话消耗下移、消耗明细置底（DOM / 导航 / `sectionToNav` 三处同步）；
+  ⑦ 导航锚点守护（4s 窗口 + loading 续期 + 用户操作即停）修「点完偏 1407px」；
+  ⑧ 骨架屏补加载说明（按面板分流 + ≥2s 显示秒数）。
+  渲染层通用教训见「八、工作台渲染踩坑」。**验证**：1500×1000 Playwright，七区块高亮逐个点过、
+  JS 错误 0、骨架期点导航最终偏差 0。
+- **已发布（v1.7.24，2026-10-24，随 tag v1.7.25 一同发版）**：自动签到 —— 开关在工作台（设置菜单 → 自动签到），
+  宿主是 **Windows 计划任务**（每天 09:30，`StartWhenAvailable` 补跑、`RestartOnFailure` 3 次）。
+  新增 `scripts/auto_checkin.py`（run / install / uninstall / status / run_task_now）、
+  `/api/auto-checkin`、`/api/auto-checkin-set`、`/api/auto-checkin-run`；
+  `serve_state.json` 增写 `port`（计划任务靠它找到服务、复用桥）。
+  详见「七、自动签到」。**本机沙箱拦 schtasks，注册链路待用户实测。**
 - **已发（v1.7.23）**：全量排查「读不到被画成没有」，四处已修：
   ① `waste_authoritative` 补 `degraded`/`error` —— L6 挂掉时 KPI 显示「—」而不是「0.00 · 服务端权威」；
   ② 概览「收支损失 · 已过期未用完」由 L3 推算（结构上恒 0）改为 L6 权威（7617.34 / 62 批）；

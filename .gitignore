@@ -19,3 +19,9 @@ Thumbs.db
 
 # ---- 本地运行日志 ----
 *.log
+
+# ---- 临时验证脚本与 Playwright profile（用完即弃，不入库）----
+.tmp-verify/
+
+# ---- 工作区内部状态（宿主工具生成，不随仓库分发）----
+.workbuddy/

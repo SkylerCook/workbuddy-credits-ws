@@ -49,6 +49,7 @@ SKILL_DIR = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 import workbuddy_credits as wc  # noqa: E402
+import auto_checkin as ac  # noqa: E402  —— 自动签到（计划任务）状态与开关
 from shortcut import create_shortcut  # noqa: E402
 
 ASSETS_DIR = os.path.join(SKILL_DIR, "assets")
@@ -153,6 +154,10 @@ HUB = SourceHub()
 # 注意：正常退出**必然**同时留下日志行，故「标记残留」是比日志更强的信号。
 _STATE_FILE = "serve_state.json"
 
+# 端口写进运行标记：自动签到（计划任务）要靠它找到"服务是否在跑、在哪个端口"，
+# 从而复用已热好的浏览器桥，而不是自己再拉一个 Chrome 去抢同一个 profile。
+_PORT = 8090
+
 
 def _state_path():
     return os.path.join(wc.DATA_DIR, _STATE_FILE)
@@ -231,6 +236,7 @@ def _arm_state():
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"pid": os.getpid(),
+                       "port": _PORT,
                        "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                        "started_ts": time.time(),
                        "version": wc.VERSION}, f, ensure_ascii=False)
@@ -539,6 +545,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"ok": ok, "message": msg}, 200 if ok else 400)
         elif path == "/api/checkin":
             self._send_json(do_checkin())
+        elif path == "/api/auto-checkin":
+            # 自动签到状态。任务**是否存在要实查**（schtasks /Query），不能只信配置文件：
+            # 用户可能在任务计划程序里手动删掉，那时开关若还显示「已开启」，
+            # 就又是一次「看着对、实际不发生」—— 正是 v1.7.23 全量排查的那类问题。
+            self._send_json(ac.status())
+        elif path == "/api/auto-checkin-set":
+            want = (qs.get("enable") or [""])[0].lower()
+            tm = (qs.get("time") or [""])[0]
+            if want in ("1", "true", "on", "yes"):
+                ok, payload = ac.install(tm or None)
+            elif want in ("0", "false", "off", "no"):
+                ok, payload = ac.uninstall()
+            else:
+                ok, payload = False, {"error": "enable 需为 1 或 0"}
+            out = dict(payload)
+            out["ok"] = ok
+            out["status"] = ac.status()   # 回带新状态，前端不必再问一次
+            # 刻意返回 200（即使失败）：成败由 body 的 ok 表达。用 4xx 会在浏览器
+            # 控制台留一条红字 "Failed to load resource"，而"开启失败"是本功能
+            # **预期内**的一种结果（权限 / 编码 / 解释器），不该看起来像页面报错。
+            self._send_json(out)
+        elif path == "/api/auto-checkin-run":
+            # 「立即试跑一次」：走 schtasks /Run，与定时触发是同一套动作定义 ——
+            # 注册成功不等于能跑，这一步让用户当场验证，而不是等第二天发现没签上。
+            ok, payload = ac.run_task_now()
+            out = dict(payload)
+            out["ok"] = ok
+            self._send_json(out)
         elif path == "/api/set-config":
             # 写用户配置（现仅有「预计可用天数」的观测窗口）。GET + query，风格与
             # create-shortcut / checkin 一致；写成功后失效缓存，下次取数按新配置算。
@@ -675,13 +709,15 @@ def _release_console():
 
 
 def main():
+    global _PORT
+    _PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8090
     _setup_log()          # 先落盘日志，之后所有 print 都留痕（含会话事件）
     _release_console()    # 释放被 Windows 分配的控制台（否则会弹出一个终端窗口）
-    _arm_state()          # 运行标记：识别「上次是否异常终止」，正常退出时清除
+    _arm_state()          # 运行标记：识别「上次是否异常终止」，正常退出时清除；含 port
     atexit.register(_disarm_state)
     _install_signal_handlers()
     _install_thread_hook()
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8090
+    port = _PORT
     # 进程退出时关掉浏览器桥（懒加载启动的那个 Chrome，窗口在屏幕外）
     atexit.register(wc.bridge_close)
     with socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler) as httpd:
