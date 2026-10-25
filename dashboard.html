@@ -322,6 +322,13 @@
   .panel h2 { font-size: 15px; font-weight: 600; color: var(--title); letter-spacing: .02em; }
   .chart { width: 100%; height: 300px; }
   .chart-tall { width: 100%; height: 420px; }
+  /* 余额趋势的右上角读数：当前余额 + 近 7 天净变化。
+     不用大号 KPI 卡 —— 概览区已经有一排了，这里只要一个对照读数。 */
+  .balance-kpi { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+                 font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .balance-kpi b { font-size: 16px; font-weight: 800; color: var(--title); letter-spacing: -.01em; }
+  .balance-kpi .up { color: var(--green); }
+  .balance-kpi .down { color: var(--red); }
   .chart-cal { width: 100%; height: 190px; }
   /* 两张日历并排：宽度对半分给两条点阵，竖向分隔线让它们各成一块而不是一张图被劈开。
      两张的内边距必须严格相等，否则列宽不同、同一周就对不齐。 */
@@ -971,6 +978,7 @@
   <div class="nav-inner" id="nav-inner" data-page-node-id="XgrnQjPLwNE9OGllD5YKiH">
     <a href="#sec-overview" class="active" data-page-node-id="p7gxg5Lr44P0rkPFUjLGZq">数据概览</a>
     <a href="#sec-charts" data-page-node-id="FrmOVAXaRRXeW4GyJnQokS">消耗分析</a>
+    <a href="#sec-balance" data-page-node-id="Bn7xQwE4Rt2yLpKdSg9VcH">余额趋势</a>
     <a href="#sec-ledger" data-page-node-id="rWa7M9C8rx1KuF5EBZzAGE">收支账本</a>
     <a href="#sec-lifecycle" data-page-node-id="Rt5mLcX9Uw3oQdJaBk7EzK">积分批次</a>
     <a href="#sec-sessions" data-page-node-id="mi9gFJqVd2mHejEjfj1SVE">会话消耗</a>
@@ -1011,7 +1019,7 @@
        这里提供一键重新登录 —— 登录后无需重启工作台 -->
   <div class="session-banner" id="session-banner" style="display:none"></div>
 
-  <!-- 面板状态条：三个面板各自独立加载、独立刷新（点名称跳到该面板，点 ↻ 仅刷新它） -->
+  <!-- 面板状态条：四个面板各自独立加载、独立刷新（点名称跳到该面板，点 ↻ 仅刷新它） -->
   <div class="panel-bar" id="panel-bar" data-page-node-id="Pa8nLbQ4Zk6mXcVtYw2SjE"></div>
 
   <!-- 核心指标卡 -->
@@ -1043,6 +1051,16 @@
       </div>
     </div>
     <div class="hint" data-page-node-id="toghDDl1Df8wrE8FGBuVI1">注：不受上方日期筛选影响，显示全部历史，两张图共用同一时间轴、同列即同日。<b>空格 = 当日无记录</b> ——消耗的请求级明细只覆盖最近 31 天（更早由逐包采样补足，可能整段缺失），收入的空格即当日未签到。收入 = 签到 + 包到账，按真实到账时间归日。</div>
+  </div>
+
+  <!-- 余额趋势：实测快照（实线）+ 守恒倒推（虚线），缺口与不可信区间断开不画 -->
+  <div class="panel" id="sec-balance">
+    <div class="panel-head">
+      <h2 data-icon="line">积分余额趋势</h2>
+      <div class="balance-kpi" id="balance-kpi"></div>
+    </div>
+    <div class="chart-tall" id="chart-balance"></div>
+    <div class="hint" id="balance-hint"></div>
   </div>
 
   <!-- 收支账本 -->
@@ -1132,7 +1150,7 @@
 <!--
   静态数据。加 async：它只是 file:// / 内嵌单文件模式的兜底数据源，
   HTTP 模式下真正的数据来自 /api/* 分面板接口。不加 async 的话，浏览器解析会在
-  这里被阻塞（实测冷启动 869ms），三个面板请求要等它跑完才发得出去 —— 首屏凭空多等一截。
+  这里被阻塞（实测冷启动 869ms），四个面板请求要等它跑完才发得出去 —— 首屏凭空多等一截。
   （render 生成 dashboard_inline.html 时会把本标签整段替换为内联数据脚本。）
 -->
 <script src="dashboard_data.js" async></script>
@@ -2208,7 +2226,7 @@
   }
 
   // ---------- 主渲染（面板级） ----------
-  // 拆成三个面板渲染函数，与后端 /api/overview、/api/requests、/api/lifecycle 一一对应。
+  // 拆成四个面板渲染函数，与后端 /api/overview、/api/requests、/api/lifecycle 一一对应。
   // 每个函数只读自己那部分键，所以某个接口慢或失败都不会污染别的面板。
 
   // 给面板标题注入图标（幂等，避免重复调用时叠加 span）
@@ -2325,7 +2343,70 @@
           ? ('近' + (D.daily_avg_window || 30) + '天日均 ' + D.daily_avg.toFixed(1) + ' 积分'
              + (D.days_left == null ? ' · 仅 ' + (D.active_days_30d || 0) + ' 天有消耗' : ''))
           : '近 ' + (D.daily_avg_window || 30) + ' 天无消耗' },
-      { cls: '', icon: 'chart', label: '累计消耗', value: (D.total_used || 0).toFixed(2), sub: '有效批次已用合计（订阅型按本周期）' },
+      // 「累计消耗」= 全部批次（含已结束）已用，绝不是「当前有效批次已用」。
+      // 2026-10-25 修：旧口径只累加 40 个存活包的 used（6240），漏掉已结束 160 个包的
+      // 12772 —— 用户拿它跟「按客户端」合计（7125）对账，怎么算都差 884，因为
+      // 两个数根本不是同一个集合。真值 19014，与「总容量 = 已用 + 可用 + 作废」严格闭合。
+      (function () {
+        const ti = D.total_used_items || {};
+        const fc = D.flow_cover || {};
+        const su = D.suite_usage || {};
+        // 明细批次（L6，含已结束）+ 套餐记账（L6 结构上没有）= 真正实际用掉
+        const usedAll = (D.total_used_all != null ? D.total_used_all : D.total_used) || 0;
+        const usedSuite = D.total_used_suite || 0;
+        const usedGrand = (D.total_used_grand != null) ? D.total_used_grand : (usedAll + usedSuite);
+        const wasted = (wa && wa.wasted_total != null) ? wa.wasted_total : ((w && w.wasted) || 0);
+        const nAll = (ti.valid_count || 0) + (ti.expired_count || 0);
+        const gap = D.l6_gap || {};
+        // scope 只有后端明确给出 'L6'（全批次）才算完整；缺字段或 'L3' 都按「仅有效批次」处理，
+        // 免得后端未重启时，新文案配旧数字把「漏算」说成「累计」。
+        const degraded = D.total_used_scope !== 'L6';
+        const suiteOn = D.total_used_suite != null;
+        return {
+          cls: '', icon: 'chart', label: '累计消耗',
+          value: usedGrand.toFixed(2),
+          // 副标题把每个加数都写出来 —— 用户扫一眼就能自己加出总数，不必翻明细
+          sub: degraded
+            ? '仅有效批次 · 未含已结束批次，偏低'
+            : (ti.valid != null
+                ? '有效 ' + ti.valid.toFixed(2) + ' + 已结束 ' + ti.expired.toFixed(2)
+                  + (usedSuite > 0 ? ' + 套餐 ' + usedSuite.toFixed(2) : '')
+                : '全部批次已用合计'),
+          title: '累计消耗 = 明细批次已用 + 套餐已用'
+               + (degraded ? '（仅有效批次口径，未含已结束批次，偏低）' : '')
+               + '\n　在用 ' + (ti.valid_count || 0) + ' 批：' + (ti.valid || 0).toFixed(2)
+               // 「已结束」= 生命周期结束，含「用光」与「过期」两种，不是「作废」
+               + '\n　已结束 ' + (ti.expired_count || 0) + ' 批：' + (ti.expired || 0).toFixed(2)
+               + (ti.expired_used_up_count != null
+                   ? '（用光 ' + ti.expired_used_up_count + ' 批 ' + ti.expired_used_up_used.toFixed(2)
+                     + ' + 过期 ' + ti.expired_wasted_count + ' 批 ' + ti.expired_wasted_used.toFixed(2) + '）'
+                   : '')
+               + (ti.expired_wasted_amount > 0
+                   ? '\n　　过期那 ' + ti.expired_wasted_count + ' 批另有 ' + ti.expired_wasted_amount.toFixed(2)
+                     + ' 没用完 → 计入「过期作废」，不算消耗'
+                   : '')
+               // 套餐批次：L6 有意过滤 CapacityType=4，且其 used 每周期归零，
+               // 只能靠本地按 resource_id 记账累积 —— 起算日必须如实写出来
+               + (suiteOn
+                   ? '\n　套餐/订阅 ' + (su.tracked || 0) + ' 批：' + usedSuite.toFixed(2)
+                     + (su.since ? '（本地记账自 ' + su.since + ' 起，之前的追不回）' : '')
+                   : '')
+               // 闭合式三项必须同源（都取 L6）。混进 L3 的余额会凭空多 500：
+               // L3 有「个人体验版」包，L6 有意过滤 CapacityType=4，那批不在明细里
+               + '\n\n闭合式（只含明细批次）：总容量 ' + (ti.total_capacity || 0).toFixed(2)
+               + ' = 已用 ' + usedAll.toFixed(2)
+               + ' + 可用 ' + (ti.remain != null ? ti.remain : (D.total_remain || 0)).toFixed(2)
+               + ' + 过期作废 ' + (ti.wasted != null ? ti.wasted : wasted).toFixed(2)
+               + (gap.diff > 0.005
+                   ? '\n另有 ' + gap.diff.toFixed(2) + ' 分（套餐/体验版那批）不在明细接口内，'
+                     + '已计入上方「可用积分」；它的消耗由套餐记账单独累计'
+                   : '')
+               + '\n\n其中 ' + (fc.credit || 0).toFixed(2) + ' 可追溯到单次调用'
+               + '（' + (fc.days || 0) + ' 天有请求流水，占 ' + (fc.pct || 0) + '%）'
+               + '\n其余 ' + (fc.untraceable || 0).toFixed(2) + ' 只有包级记账，拆不出模型/客户端'
+               + '\n「按客户端 / 按模型 / 按用途」三张表都只统计那个可追溯的部分',
+        };
+      })(),
       { cls: 'amber', icon: 'alert', label: '即将到期（7天内）', value: w.at_risk_count || 0, sub: '涉及 ' + (w.at_risk || 0).toFixed(2) + ' 积分' },
       holCard,   // 落在法定节假日、超出 7 天窗口的批次；无则为 null（下面 filter 掉）
       // 「包明细接口没读到」绝不能画成「0.00 · 服务端权威」：
@@ -2361,7 +2442,11 @@
             v: ((wa && wa.wasted_total != null ? wa.wasted_total : (w.wasted || 0))).toFixed(2) + ' 积分',
             d: ((wa && wa.wasted_count) || w.wasted_count || 0) + ' 批' },
       { cls: 'amber', icon: 'alert', k: '未来 7 天到期风险', v: (w.at_risk || 0).toFixed(2) + ' 积分', d: (w.at_risk_count || 0) + ' 批' },
-      { cls: '', icon: 'chart', k: '有效批次已用', v: (D.total_used || 0).toFixed(2) + ' 积分', d: '资源包视角（不含已过期包；订阅型按本周期）' },
+      // 与「累计消耗」卡口径对齐：取 L6 的有效批次已用（与卡片副标题同一个数），
+      // 不再用 L3 的 total_used —— 两者取数时点不同，会差几十分让人对不上
+      { cls: '', icon: 'chart', k: '有效批次已用',
+        v: (((D.total_used_items || {}).valid != null ? D.total_used_items.valid : D.total_used) || 0).toFixed(2) + ' 积分',
+        d: '累计消耗中仍有效的那部分（不含已结束批次与套餐）' },
       // 活动周期内的签到天数放这里（接口 streak_days 的口径）；
       // 「今日签到」卡展示的是跨周期的**真实连续**天数 —— 两者不同时一眼可见
       { cls: 'green', icon: 'cal', k: '签到活动', v: (D.checkin && D.checkin.activity_name) || '-',
@@ -2599,6 +2684,7 @@
   // ---- 三面板全量重绘（日期范围切换 / file:// 静态模式 / 兜底）----
   function renderAllPanels(D) {
     renderOverviewPanel(D);
+    renderBalanceTrend(D);
     renderRequests(D);
     renderLifecycle(D);
     renderHealth(D);
@@ -2626,6 +2712,142 @@
              '<span class="hb-v">' + (s.label || '-') + '</span></span>';
     }).join('');
     bar.style.display = 'flex';
+  }
+
+  // ---------- 余额趋势（实测快照 + 守恒倒推） ----------
+  // 数据侧已经把「能不能画」判完了：gap / unreliable 一律给 null。
+  // 这里唯一的职责是把 null 忠实画成断线 —— connectNulls 必须为 false，
+  // 打开它就会把「那几天没数据」连成一条平滑曲线，等于替用户把空白编圆。
+  function renderBalanceTrend(D) {
+    const boxEl = document.getElementById('chart-balance');
+    const kpiEl = document.getElementById('balance-kpi');
+    const hintEl = document.getElementById('balance-hint');
+    const t = D.balance_trend;
+
+    if (!t || !t.points || !t.points.length) {
+      boxEl.innerHTML = '<div class="empty">暂无余额趋势数据</div>';
+      kpiEl.innerHTML = '';
+      hintEl.innerHTML = '<div class="hint">余额趋势需要「当前余额 + 日消耗 + 过期作废」三边数据。' +
+        '如果这里长期为空，先看上方数据源徽章 —— 大概率是取数没成功，而不是真的没有余额。</div>';
+      return;
+    }
+
+    const pts = t.points;
+    const dates = pts.map(function (p) { return p.date; });
+    const vals = pts.map(function (p) { return p.remain; });
+    const drawn = pts.filter(function (p) { return p.remain != null; });
+    const last = drawn[drawn.length - 1];
+
+    // 近 7 天净变化：往前找最近一个有值的点做差；中途被截断就没有可比对象，那就不显示
+    let deltaHtml = '';
+    const i7 = pts.length - 8;
+    if (i7 >= 0 && last) {
+      let base = null;
+      for (let i = Math.min(i7, pts.length - 1); i >= 0; i--) {
+        if (vals[i] != null) { base = vals[i]; break; }
+      }
+      if (base != null) {
+        const d = last.remain - base;
+        deltaHtml = '<span>近 7 天 <b class="' + (d >= 0 ? 'up' : 'down') + '">' +
+                    (d >= 0 ? '+' : '') + fmtCredit(d) + '</b></span>';
+      }
+    }
+    kpiEl.innerHTML = (last ? '<span>当前余额 <b>' + fmtCredit(last.remain) + '</b></span>' : '') + deltaHtml;
+
+    // 事件点：作废单独标红 —— 「余额掉了一截却没有消耗」最容易被误读成取数坏了。
+    // 到账只标 ≥300 的：签到每天 +100 是背景噪音，全标出来会把曲线糊成一片。
+    function evPoints(type, minAmt) {
+      return (t.events || []).filter(function (e) {
+        return e.type === type && (e.amount || 0) >= (minAmt || 0);
+      }).map(function (e) {
+        const i = dates.indexOf(e.date);
+        return (i >= 0 && vals[i] != null) ? { value: [e.date, vals[i]], amount: e.amount } : null;
+      }).filter(Boolean);
+    }
+    const wasteData = evPoints('waste', 0);
+    const incomeData = evPoints('income', 300);
+
+    const reconData = pts.map(function (p) { return p.kind === 'recon' ? p.remain : null; });
+    // 实测段要接上前一个点，否则「只有 1 天快照」时它会在末端孤零零挂一个点、
+    // 和推算段断开，看起来像数据丢失。所以把紧邻实测段的那一个推算点也纳进来当接点。
+    const snapData = pts.map(function (p, i) {
+      if (p.kind === 'snapshot') return p.remain;
+      const next = pts[i + 1];
+      if (next && next.kind === 'snapshot' && p.remain != null && p.kind === 'recon') return p.remain;
+      return null;
+    });
+    const hasSnap = pts.some(function (p) { return p.kind === 'snapshot'; });
+
+    const chart = initChart('chart-balance');
+    chart.setOption({
+      grid: { left: 62, right: 26, top: 26, bottom: 34 },
+      tooltip: {
+        trigger: 'axis',
+        formatter: function (ps) {
+          if (!ps || !ps.length) return '';
+          const d = ps[0].axisValue;
+          const p = pts[dates.indexOf(d)] || {};
+          let h = '<b>' + d + '</b>';
+          h += '<br/>余额　' + (p.remain == null ? '<span style="color:#6E7A8C">无数据（已断开）</span>'
+                                                : fmtCredit(p.remain));
+          if (p.consume) h += '<br/>当日消耗　' + fmtCredit(p.consume);
+          if (p.income) h += '<br/>当日到账　+' + fmtCredit(p.income);
+          if (p.waste) h += '<br/><span style="color:#F87171">当日作废　' + fmtCredit(p.waste) + '</span>';
+          return h;
+        },
+      },
+      xAxis: {
+        type: 'category', data: dates, boundaryGap: false,
+        axisLabel: {
+          fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 11,
+          formatter: function (v) { return v.length >= 10 ? v.slice(5) : v; },
+          interval: Math.max(0, Math.floor(dates.length / 9)),
+        },
+      },
+      yAxis: { type: 'value', name: '余额', nameTextStyle: { color: '#6E7A8C', fontSize: 11 }, scale: true },
+      series: [
+        {
+          name: '推算余额', type: 'line', data: reconData,
+          connectNulls: false, smooth: false, showSymbol: false,
+          lineStyle: { width: 2, color: '#22D3EE', type: 'dashed', opacity: .85 },
+          itemStyle: { color: '#22D3EE' },
+          areaStyle: {
+            color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [{ offset: 0, color: 'rgba(34,211,238,.18)' },
+                           { offset: 1, color: 'rgba(34,211,238,0)' }] },
+          },
+          z: 2,
+        },
+        {
+          // 实测段压在推算段之上：有快照的日子必须是实线，一眼能分出哪段是真值
+          name: '实测余额', type: 'line', data: snapData,
+          connectNulls: false, smooth: false, showSymbol: true, symbolSize: 5,
+          lineStyle: { width: 2.5, color: '#67E8F9' },
+          itemStyle: { color: '#67E8F9' }, z: 4,
+        },
+        {
+          name: '过期作废', type: 'scatter', data: wasteData,
+          symbol: 'triangle', symbolSize: 9, itemStyle: { color: '#F87171' }, z: 5,
+          tooltip: { formatter: function (p) { return '过期作废 ' + fmtCredit(p.data.amount) + '<br/>' + p.data.value[0]; } },
+        },
+        {
+          name: '大额到账', type: 'scatter', data: incomeData,
+          symbol: 'circle', symbolSize: 7, itemStyle: { color: '#34D399' }, z: 5,
+          tooltip: { formatter: function (p) { return '到账 +' + fmtCredit(p.data.amount) + '<br/>' + p.data.value[0]; } },
+        },
+      ],
+    });
+
+    const c = t.coverage || {};
+    const span = (c.first && c.last) ? ('有效区间 <b>' + c.first + ' ~ ' + c.last + '</b>（' +
+                 drawn.length + ' 天）') : '';
+    hintEl.innerHTML = span +
+      (span ? '　·　' : '') + (t.note || '') +
+      '。<br/>曲线是<b>从当前余额往回倒推</b>出来的，不是历史实测：当日消耗与到账都有据，' +
+      '但更早的<b>到账记录不全</b>（资源接口只返回有效期内的包，已结束包的到账无法回溯），' +
+      '所以越往前的绝对值越低 —— <b>看走势与变化量，别把早期余额当准数</b>。' +
+      '每次打开工作台会记一条真实快照，实测点以后以实线替换推算段。' +
+      (hasSnap ? '' : '　当前<b>还没有实测快照</b>（今天起开始记录）。');
   }
 
   // ---------- 消耗明细（请求级，口径 A） ----------
@@ -2664,6 +2886,16 @@
 
     // 构成（模型 / 客户端 / 用途）
     const mb = D.model_breakdown || [], cb = D.client_breakdown || [], pb = D.purpose_breakdown || [];
+    // 三张表的合计都来自请求流水，而流水只覆盖「有记录的那几十天」——
+    // 不标出占比，用户会把这里的合计误当「累计消耗」（2026-10-25 的实际困惑）。
+    const fc = D.flow_cover || {};
+    const hasFlow = fc.pct != null && D.total_used_all != null;
+    const flowNote = hasFlow
+      ? ('仅统计有请求流水的 ' + (fc.days || 0) + ' 天'
+         + (fc.first ? '（' + fc.first + ' ~ ' + fc.last + '）' : '')
+         + '，合计 ' + (fc.credit || 0).toFixed(2) + ' 分，占累计消耗 ' + fc.pct + '%。'
+         + '\n其余 ' + (fc.untraceable || 0).toFixed(2) + ' 分只有包级记账，无法拆到模型/客户端/用途。')
+      : '';
     document.getElementById('req-breakdown').innerHTML = [
       { title: '按模型', list: mb }, { title: '按客户端', list: cb }, { title: '按用途', list: pb },
     ].map(function (g) {
@@ -2672,8 +2904,9 @@
       // 条长与占比都按该维度「全量」折算 —— 第一名要读出"垄断感"，这是构成区存在的意义
       const total = g.list.reduce(function (s, x) { return s + (x.credit || 0); }, 0) || 1;
       const head = '<div class="bk-hd"><span class="bk-hd-t">' + g.title + '</span>' +
-        '<span class="bk-hd-m" title="' + (n > 5 ? '共 ' + n + ' 项，此处显示前 5' : '共 ' + n + ' 项') + '">合计 ' +
-        fmtCredit(total) + ' · 共 ' + n + ' 项</span></div>';
+        '<span class="bk-hd-m" title="' + (n > 5 ? '共 ' + n + ' 项，此处显示前 5' : '共 ' + n + ' 项')
+          + (flowNote ? '\n' + flowNote : '') + '">合计 ' +
+        fmtCredit(total) + ' · ' + (hasFlow ? '占累计 ' + fc.pct + '% · ' : '') + '共 ' + n + ' 项</span></div>';
       return '<div class="bk-col">' + head +
         '<div class="bk-cols"><span>名称</span><span></span><span>积分</span><span>占比</span></div>' +
         g.list.slice(0, 5).map(function (x, i) {
@@ -3279,15 +3512,16 @@
   }
 
   // ---------- 交互：分面板加载 / 局部刷新 ----------
-  // 设计要点：三个面板各自独立走一个接口、独立渲染、独立失败。
+  // 设计要点：四个面板各自独立走一个接口、独立渲染、独立失败。
   // 首屏并行发出三个请求，谁先回来谁先上屏（不再等"全量数据"一次性返回）；
   // 单个面板出错只影响它自己，其余照常可用 —— 这正是首屏提速与体验鲁棒的关键。
 
-  const PANELS = ['overview', 'requests', 'lifecycle'];
-  const PANEL_LABEL = { overview: '概览', requests: '消耗明细', lifecycle: '积分批次' };
+  const PANELS = ['overview', 'balance', 'requests', 'lifecycle'];
+  const PANEL_LABEL = { overview: '概览', balance: '余额趋势', requests: '消耗明细', lifecycle: '积分批次' };
   // 面板 → 它负责的 DOM 区域（加载态 / 错误态要落在这些区域里）
   const PANEL_SECTIONS = {
     overview: ['sec-overview', 'sec-charts', 'sec-heat', 'sec-ledger', 'sec-sessions', 'sec-waste'],
+    balance: ['sec-balance'],
     requests: ['sec-requests'],
     lifecycle: ['sec-lifecycle'],
   };
@@ -3296,6 +3530,7 @@
   // 加载态说明文案：回答"在等什么、为什么慢"，而不是只转圈。
   // 两个面板慢的原因不同，共用一句话只会让人以为都在卡同一个接口。
   const PANEL_WAIT = {
+    balance: { main: '正在重建余额时间线', sub: '要三边对齐：当前余额 + 日消耗 + 过期作废' },
     requests: { main: '正在取请求级流水', sub: '最近 31 天逐条调用，量大时要几秒' },
     lifecycle: { main: '正在取积分批次', sub: '资源接口 + 包明细接口，两边到齐才能算浪费' },
   };
@@ -3334,7 +3569,7 @@
 
   // ---- 后端能力探测 / 请求超时 ----
   // 页面 HTML 是实时从磁盘读的，8090 上的服务进程却可能是旧版（旧进程一直占着端口，
-  // 启动器曾误判为「已在运行」）。那时三个面板接口全部 404：控制台一片红，用户也看不懂。
+  // 启动器曾误判为「已在运行」）。那时四个面板接口全部 404：控制台一片红，用户也看不懂。
   // 所以先探一次 /api/version —— 拿到版本 → 面板模式；404 但服务在 → 旧版，直接走全量。
   let backendMode = null;   // 'panels' | 'legacy' | 'down'
 
@@ -3374,7 +3609,7 @@
   const SVC_NOTE_LEGACY =
     '<span class="sn-ico">!</span>' +
     '<span class="sn-txt"><b>本地服务仍是旧版本</b>：8090 上跑的进程不含面板接口，' +
-    '已自动降级为<b>全量模式</b> —— 数据照常显示，但三个面板的独立刷新与耗时统计暂不可用。' +
+    '已自动降级为<b>全量模式</b> —— 数据照常显示，但四个面板的独立刷新与耗时统计暂不可用。' +
     '重新双击桌面「积分工作台」快捷方式即可自动升级服务，随后点右侧按钮重试。</span>' +
     '<button class="btn" id="svc-recheck">重新检测</button>';
 
@@ -3508,6 +3743,8 @@
       renderOverviewPanel(DATA);
       firstLoadPrompts(DATA);
       saveOverviewCache(d);        // 供下次打开时"秒开"
+    } else if (panel === 'balance') {
+      renderBalanceTrend(DATA);
     } else if (panel === 'requests') {
       renderRequests(DATA);
       // 消耗明细拥有 L5 口径（今日已使用 / usage_daily）→ 回带刷新概览 KPI
@@ -3649,7 +3886,7 @@
     host.insertBefore(div, host.firstChild);
   }
 
-  // 首屏：三个面板并行请求；全部失败（或概览失败）时退回静态 dashboard_data.js，保证页面不空
+  // 首屏：四个面板并行请求；全部失败（或概览失败）时退回静态 dashboard_data.js，保证页面不空
   function loadAllPanels(fresh) {
     return Promise.all(PANELS.map(function (p) { return loadPanel(p, fresh); }));
   }
@@ -4193,9 +4430,12 @@
   // 顺序必须与页面里的 DOM 顺序一致：updateActiveNav 是「遍历一遍、谁最后满足条件谁胜出」，
   // 靠的是遍历顺序而不是坐标大小。映射顺序与 DOM 错开时，滚动会高亮到上方那个区块的名字上。
   const sectionToNav = {
+    // ⚠ 键顺序必须与 DOM 顺序一致：updateActiveNav 是「遍历一遍、top <= offset 就赋值、
+    // 最后赋值者胜出」，靠遍历顺序生效而非坐标。映射与 DOM 错开就会高亮到上面那个区块。
     'sec-overview': '数据概览',
     'sec-charts': '消耗分析',
     'sec-heat': '消耗分析',
+    'sec-balance': '余额趋势',
     'sec-ledger': '收支账本',
     'sec-lifecycle': '积分批次',
     'sec-waste': '收支账本',
@@ -4248,7 +4488,7 @@
 
   let rszTimer = null;
   window.addEventListener('resize', function () {
-    ['chart-daily', 'chart-cum'].forEach(function (id) {
+    ['chart-daily', 'chart-cum', 'chart-balance'].forEach(function (id) {
       const inst = echarts.getInstanceByDom(document.getElementById(id));
       if (inst) inst.resize();
     });
@@ -4260,7 +4500,7 @@
 
   // 初始渲染
   // - file:// / 内嵌单文件：用页面自带静态数据一次性渲染
-  // - HTTP：三个面板并行拉取，谁先回来谁先上屏（不再等一次性全量返回）；
+  // - HTTP：四个面板并行拉取，谁先回来谁先上屏（不再等一次性全量返回）；
   //         概览失败才逐级兜底（全量接口 → 静态文件），保证页面不空。
   injectPanelIcons();
   renderPanelBar();

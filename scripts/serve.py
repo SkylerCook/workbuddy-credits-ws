@@ -24,7 +24,7 @@ serve.py —— 积分工作台本地服务：提供可刷新的工作台。
   首屏慢的根因是「四路服务端数据串行往返」（实测 3.84s，纯 CPU 仅 0.03s）。
   两道改造把它降到 ≈0.85s：
     1. 四源并发拉取（见 workbuddy_credits.fetch_sources）
-    2. 进程内 SourceHub：TTL 缓存 + single-flight，页面同时发三个面板请求时
+    2. 进程内 SourceHub：TTL 缓存 + single-flight，页面同时发四个面板请求时
        同一个源只会真正打一次上游，而不是三份
   ?fresh=1 强制重取（面板级刷新只重取该面板拥有的源，见 PANEL_FRESH_KEYS）。
 
@@ -87,7 +87,7 @@ def _mime_for(path):
 class SourceHub:
     """四个服务端数据源的进程内缓存 + single-flight。
 
-    为什么需要：页面首屏会**同时**发 3 个面板请求，而三个面板共用底层数据源
+    为什么需要：页面首屏会**同时**发 3 个面板请求，而四个面板共用底层数据源
     （概览要 L3/L4，消耗明细要 L5，包生命周期要 L6，且各自装配时都要 L2 基准）。
     没有中枢就是同一份上游数据被打 3 次；有了它，同一时刻只有一个线程真正去取，
     其余等待同一结果。
@@ -534,7 +534,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._send_json({"ok": True, "log": f.read()[-2000:]})
             except Exception:
                 self._send_json({"ok": True, "log": ""})
-        elif path in ("/api/overview", "/api/requests", "/api/lifecycle"):
+        elif path in ("/api/overview", "/api/requests", "/api/lifecycle", "/api/balance"):
             panel = path.rsplit("/", 1)[-1]
             self._send_json(build_panel_json(panel, fresh=self._fresh_flag(qs)))
         elif path == "/api/data":
@@ -722,7 +722,7 @@ def main():
     atexit.register(wc.bridge_close)
     with socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler) as httpd:
         print("积分工作台服务已启动：http://127.0.0.1:%d  （Ctrl+C 停止）" % port)
-        print("  版本 %s ｜ 面板接口：/api/overview、/api/requests、/api/lifecycle"
+        print("  版本 %s ｜ 面板接口：/api/overview、/api/balance、/api/requests、/api/lifecycle"
               % wc.VERSION)
         print("  取数通道：%s" % (
             "浏览器桥（首次取数时启动浏览器，窗口在屏幕外；会话约 7 天过期）"

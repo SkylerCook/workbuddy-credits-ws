@@ -342,7 +342,7 @@ def _find_serve_python():
 
     为什么需要这一步：双击启动器时，launcher 往往由 WorkBuddy 内置 pythonw 执行，
     而 Playwright 多数装在系统 Python 里 —— 直接沿用内置解释器会让浏览器桥起不来，
-    页面表现为「三个面板一直转圈」。所以这里主动探测，而不是想当然用 sys.executable。
+    页面表现为「四个面板一直转圈」。所以这里主动探测，而不是想当然用 sys.executable。
     """
     for exe in _candidate_interpreters():
         if _python_has_playwright(exe):

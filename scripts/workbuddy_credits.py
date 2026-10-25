@@ -123,6 +123,9 @@ CHECKIN_HISTORY_FILE = os.path.join(DATA_DIR, "checkin_history.json")
 INCOME_EVENTS_FILE = os.path.join(DATA_DIR, "income_events.json")
 USAGE_HISTORY_FILE = os.path.join(DATA_DIR, "usage_history.json")
 REQUESTS_HISTORY_FILE = os.path.join(DATA_DIR, "requests_history.jsonl")
+# 套餐/订阅型批次的消耗累积（L6 结构上不含 CapacityType=4，且其 used 每周期归零，
+# 只能本地按 resource_id 记「本期最大值 + 已结束周期合计」）
+SUITE_USAGE_FILE = os.path.join(DATA_DIR, "suite_usage.json")
 
 # 请求级明细（L5）归档约束 —— 均为实测硬约束
 REQ_MAX_WINDOW_DAYS = 31   # 单次查询窗口宽度上限；>31 天服务端会静默剥离 input/agentPurpose
@@ -1054,6 +1057,10 @@ def parse_pkg_lifecycle(raw_accounts, status_kind="valid"):
             "cycle_based": cycle_based, "diverged": diverged,
             "status": st, "status_label": status_label,
             "cycle_end": cycle_end,
+            # 到账时刻：累积「包到账」事件、重建余额趋势都要用它。
+            # 早先这里没保留 CycleStartTime，导致**已结束的包无法补记到账** ——
+            # 总账缺口 2761 分，倒推余额因此在 9 月出现负数（2026-10-24 查）。
+            "cycle_start": a.get("CycleStartTime") or "",
             "expired_time": a.get("ExpiredTime"),
             "deduction_end": deduction_end,
             "exp_ts": exp_ts,
@@ -1456,9 +1463,42 @@ def sources_health(l5_meta, l6_meta, reconcile_result, l2_sample_points=0, check
 
 
 # ---------- 快照 ----------
-def record_snapshot(packages, checkin=None):
+def _last_snapshot_stamp():
+    """只读文件尾部取最后一条快照的时间戳（不整文件加载）。
+
+    快照文件会随天数无限增长，为了一个「同一分钟别重复写」的判断去 load_snapshots()
+    整份读一遍不划算 —— 尾读 8KB 足够覆盖最后一两条。
+    """
+    try:
+        if not os.path.exists(SNAPSHOT_FILE):
+            return ""
+        with open(SNAPSHOT_FILE, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 8192))
+            tail = f.read().decode("utf-8", "ignore")
+        for line in reversed([x for x in tail.splitlines() if x.strip()]):
+            try:
+                return str(json.loads(line).get("time", ""))[:16]
+            except Exception:
+                continue      # 末行可能是进程被杀时截断的坏行，继续往前找
+        return ""
+    except Exception:
+        return ""
+
+
+def record_snapshot(packages, checkin=None, dedupe_minute=True):
+    """把当前余额落成一条快照；dedupe_minute 时同一分钟不重复写。
+
+    为什么要去重：页面每点一次刷新都会走到这里。一分钟内连点几下，会在时间轴上
+    叠出好几个几乎相同的点 —— 既没有信息量，又会让「实测天数」统计虚高
+    （按行数算就变成「1 天 5 个采样」）。去重后一天内的采样密度才反映真实行为。
+    """
     os.makedirs(DATA_DIR, exist_ok=True)
     now = datetime.now()
+    stamp = now.strftime("%Y-%m-%dT%H:%M")
+    if dedupe_minute and _last_snapshot_stamp() == stamp:
+        return None
     avail = [p for p in packages if p["available"]]
     snap = {
         "ts": int(time.time() * 1000),
@@ -1777,27 +1817,144 @@ def real_streak_days(checkin_dates=None, extra_dates=None, today=None, merged=No
     return compute_real_streak(merged, today or today_date())
 
 
-def accumulate_income(packages):
-    """对比 ResourceId 记录新包到账事件，返回全部到账事件。"""
+def _label_by_capacity(ctype):
+    """按 CapacityType 反查分类名（L6 已解析的包里没有 label，需要它兜底）。"""
+    try:
+        return TYPE_LABEL.get(int(ctype), "加量包/其他")
+    except Exception:
+        return "加量包/其他"
+
+
+def accumulate_income(packages, extra=()):
+    """对比 ResourceId 记录新包到账事件，返回全部到账事件。
+
+    extra：额外的包清单，通常是 **L6 的已结束包**。L3（资源接口）只返回
+    「有效期内的包」，已过期 / 已用完的包它从来没见过 —— 那些包的到账就此
+    永久丢失。实测总账因此缺 2761 分，倒推余额在 9 月出现负数（2026-10-24）。
+    L6 保留了已结束包（且带 CycleStartTime），所以在这里一并补录。
+    """
     events = _load_json(INCOME_EVENTS_FILE, {"events": []})
     known = set(e.get("resource_id") for e in events["events"])
     changed = False
-    for p in packages:
+    for p in list(packages) + list(extra or ()):
         rid = p.get("resource_id")
         if not rid or rid in known:
             continue
-        events["events"].append({
+        ev = {
             "resource_id": rid,
-            "name": p["name"],
-            "label": p["label"],
-            "size": p["size"],
+            "name": p.get("name") or "",
+            "label": p.get("label") or _label_by_capacity(p.get("capacity_type")),
+            "size": p.get("size") or 0,
             "income_time": p.get("cycle_start") or "",
-        })
+        }
+        # 没有到账时刻就不入库：放不上时间轴，留着只会把文件撑大、
+        # 还让「到账事件数」虚高（实测 L6 的包全部不带 CycleStartTime，
+        # 一次性补进来 100 条空时间条目，已清理）。等接口给出该字段再补。
+        if not ev["income_time"]:
+            continue
+        events["events"].append(ev)
         known.add(rid)
         changed = True
     if changed:
         _save_json(INCOME_EVENTS_FILE, events)
     return events["events"]
+
+
+def accumulate_suite_usage(packages, l6_rows=None):
+    """把「套餐/订阅型」批次的消耗累积成本地历史（v1.7.29）。
+
+    为什么必须单独记账 —— 两个硬约束叠在一起：
+
+      ① L6（包明细接口）**有意过滤 CapacityType=4**，套餐那批结构上就不在里面
+         （见 dev-notes「数据分层与口径」）。所以累计消耗天然漏掉套餐包的消耗。
+      ② 套餐包的 `used` 只保留**本周期**，周期一换就归零。所以即使放开过滤、
+         把它硬塞进 L6，看到的也只是「本月用掉多少」，历史照样拿不回来 ——
+         那是假解决方案，还会让已经闭合的等式破掉（套餐额度是周期额度，
+         不是永久额度，不属于同一个池子）。
+
+    可行解只有一个：自己攒。按 `resource_id` 存「本期已用最大值」+「已结束周期的
+    历史累计」，每次取数时增量推进：
+
+      - 本期 used > 记录最大值 → 更新最大值（正常消耗中）
+      - `cycle_end` 变了 → 进入新周期：上期最大值整段并入 consumed，本期重置
+      - 批次从接口消失后记录保留，总量**只增不减**
+
+    这套逻辑对服务端两种实现都成立：若每月新建 resource_id，每个 id 只出现一次
+    （consumed=0、max_used=本期用量）；若同一 id 续期，则靠 cycle_end 判定换期。
+    两种情况求和口径一致，所以不必猜服务端用的是哪种。
+
+    ⚠ 只能从现在往前攒，install 之前的套餐消耗永久缺失 —— 这是数据源决定的，
+      不是实现取巧。返回里的 `since` 会如实告诉用户从哪天开始有记录。
+
+    返回 {"total", "items", "tracked", "since", "error"}
+    """
+    l6_ids = set(str(r.get("resource_id") or "") for r in (l6_rows or []))
+    store = _load_json(SUITE_USAGE_FILE, {"version": 1, "items": {}})
+    items = store.setdefault("items", {})
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+    for p in packages or []:
+        # 只记订阅型：普通包的 used 本身就是累计值，L6 里已经有了，
+        # 在这里再记一遍就是**双计**（实测 L6 的 200 个批次全是 CapacityType=1）
+        if not p.get("cycle_based"):
+            continue
+        rid = str(p.get("resource_id") or "")
+        if not rid:
+            continue
+        # 双保险：万一将来 L6 覆盖到某个订阅包，以 L6 为准，这里跳过
+        if rid in l6_ids:
+            continue
+
+        cur = round(float(p.get("used") or 0), 4)
+        ce = str(p.get("cycle_end") or "")
+        rec = items.get(rid) or {"name": "", "label": "", "size": 0.0,
+                                 "consumed": 0.0, "max_used": 0.0,
+                                 "cycle_end": "", "first_seen": now}
+        if rec.get("cycle_end") and ce and ce != rec["cycle_end"]:
+            # 换期：上一周期走到头的 max_used 是它最终的已用量，整段转历史
+            rec["consumed"] = round(float(rec.get("consumed") or 0)
+                                    + float(rec.get("max_used") or 0), 4)
+            rec["max_used"] = cur
+            rec["cycle_switch_count"] = int(rec.get("cycle_switch_count") or 0) + 1
+        else:
+            # 同周期内取最大值：used 只增不减，但服务端偶发回退时不能跟着退
+            rec["max_used"] = max(float(rec.get("max_used") or 0), cur)
+
+        rec["cycle_end"] = ce or rec.get("cycle_end") or ""
+        rec["name"] = p.get("name") or rec.get("name") or ""
+        rec["label"] = p.get("label") or rec.get("label") or ""
+        rec["size"] = round(float(p.get("size") or 0), 4)
+        rec["remain"] = round(float(p.get("remain") or 0), 4)
+        rec["last_seen"] = now
+        items[rid] = rec
+
+    _save_json(SUITE_USAGE_FILE, store)
+
+    detail, total = [], 0.0
+    for rid, r in items.items():
+        used = round(float(r.get("consumed") or 0) + float(r.get("max_used") or 0), 4)
+        total += used
+        detail.append({
+            "resource_id": rid,
+            "name": r.get("name") or "",
+            "label": r.get("label") or "",
+            "size": r.get("size") or 0,
+            "consumed": round(float(r.get("consumed") or 0), 4),
+            "current": round(float(r.get("max_used") or 0), 4),
+            "used": used,
+            "cycle_end": r.get("cycle_end") or "",
+            "last_seen": r.get("last_seen") or "",
+        })
+    detail.sort(key=lambda x: (-x["used"], x["cycle_end"]))
+    firsts = sorted(v.get("first_seen") or "" for v in items.values())
+    return {
+        "total": round(total, 4),
+        "items": detail,
+        "tracked": len(items),
+        # 记账起算日：如实告知「从这天起才准」，避免用户以为它能覆盖全历史
+        "since": firsts[0][:10] if firsts and firsts[0] else "",
+        "error": "",
+    }
 
 
 def accumulate_usage(packages):
@@ -2033,6 +2190,193 @@ def build_timeline(snapshots):
     return balance, net_change
 
 
+# ---------- 余额趋势（重建 + 实测双层）----------
+TREND_DAYS = 70            # 默认回溯窗口
+TREND_L5_WINDOW = REQ_MAX_WINDOW_DAYS   # L5 只能稳定覆盖的窗口：窗口内「没记录」= 真没花
+
+
+def build_balance_trend(current_remain, l6_expired, income_events, l5_rows,
+                        snapshots=None, days=TREND_DAYS, l5_meta=None):
+    """把「现在的余额」往回推成每日余额曲线。
+
+    为什么是倒推而不是正推：L6 的包没有到账时间（`CycleStartTime` 服务端不返回），
+    正推就得靠猜起点；而**余额是守恒的** —— 昨天的余额 = 今天的余额 + 今天消耗
+    − 今天到账 + 今天作废，四项里其余三项都有精确记录，只有「今天的余额」需要锚点，
+    而它就是当前可用剩余。倒推的唯一误差来源是**消耗记录的缺口**，那正是我们要标出来的。
+
+    三类日期分开标注，绝不混为一条平滑曲线：
+      snapshot —— 有真实快照（实测值，误差 0）
+      recon    —— 由守恒式推出，且当天消耗数据在 L5 可覆盖窗口内
+      gap      —— 在窗口之外、当天又没有任何记录：**不能当成「没花」**，图上断开
+
+    返回 dict，直接给前端用。
+    """
+    from datetime import date as _date, timedelta as _td
+
+    snapshots = snapshots or []
+    today = _date.today()
+    days = max(2, int(days or TREND_DAYS))
+    day_list = [today - _td(days=days - 1 - i) for i in range(days)]
+    axis = [d.isoformat() for d in day_list]
+
+    # 三类日变动。key 一律是 YYYY-MM-DD，避免时区/格式差异导致对不上。
+    consume, income, waste = {}, {}, {}
+    for r in l5_rows or []:
+        t = str(r.get("requestTime") or r.get("time") or "")
+        if len(t) >= 10:
+            consume[t[:10]] = consume.get(t[:10], 0.0) + float(r.get("credit") or 0)
+    for e in income_events or []:
+        t = str(e.get("income_time") or "")
+        if len(t) >= 10 and not e.get("time_missing"):
+            income[t[:10]] = income.get(t[:10], 0.0) + float(e.get("size") or 0)
+    for p in l6_expired or []:
+        t = str(p.get("expired_time") or "")
+        w = float(p.get("wasted") or 0)
+        if len(t) >= 10 and w > 0:
+            waste[t[:10]] = waste.get(t[:10], 0.0) + w
+
+    # 实测快照：同一天多条时取最后一条（那就是当天下班时的真实余额）
+    snap_by_day = {}
+    for s in snapshots:
+        d = s.get("date") or str(s.get("time") or "")[:10]
+        if d:
+            snap_by_day[d] = float(s.get("total_remain") or 0)
+
+    stable_from = (today - _td(days=max(1, TREND_L5_WINDOW) - 1)).isoformat()
+    today_s = today.isoformat()
+
+    # 「哪天被真正抓取覆盖过」—— 判缺口的唯一依据。
+    # 不能拿「最近 31 天」当代理：L5 窗口说的是**能查到多远**，不是**查过没有**。
+    # 本地只在打开工作台时才抓一次，每抓一次覆盖该时刻往前 31 天；
+    # 把这些区间求并，落在并集里的日期才「有据可查」。
+    # 反例：早先用「近 31 天一律可信」，结果国庆那串平坦上涨被当成缺口；
+    # 而它其实是真实的 —— 假期没跑任务，每天只有签到 +100。
+    fetched_days = set()
+    for r in l5_rows or []:
+        fa = str(r.get("fetched_at") or "")[:10]
+        if len(fa) == 10:
+            fetched_days.add(fa)
+    covered_days = set()
+    for fa in fetched_days:
+        try:
+            f = _date.fromisoformat(fa)
+        except Exception:
+            continue
+        for i in range(max(1, TREND_L5_WINDOW)):
+            covered_days.add((f - _td(days=i)).isoformat())
+
+    # 本次抓取的窗口本身也是覆盖证据 —— 哪怕那几天一条记录都没有：
+    # 接口的 meta 已明确 window_start ~ 今天 是查过的，查过且为空 = 真的没花。
+    _ws = str((l5_meta or {}).get("window_start") or "")[:10]
+    if len(_ws) == 10 and not (l5_meta or {}).get("error"):
+        try:
+            _d0 = _date.fromisoformat(_ws)
+            _d = today
+            while _d >= _d0:
+                covered_days.add(_d.isoformat())
+                _d -= _td(days=1)
+        except Exception:
+            pass
+
+    # 倒推：先落到今天，再逐日往过去走
+    vals, kinds = {}, {}
+    cur = float(current_remain or 0)
+    # 负余额是不可能的。一旦倒推到负数，说明那之前有**到账记录缺失**
+    # （L3 只给有效期内的包，已结束包到账没被记过，实测缺 2761 分）。
+    # 误差会一路往前累积，所以第一个负值出现的日期及其更早的日期全部不可信 ——
+    # 截断不画，比画一条穿到地下的线诚实得多。
+    cut_at = None
+    for d in reversed(axis):
+        if cut_at is not None:
+            kinds[d] = "unreliable"
+            vals[d] = None
+            continue
+        if d in snap_by_day:
+            # 实测值优先 —— 它同时把此前累积的推算误差「截断」在这里
+            cur = snap_by_day[d]
+            kinds[d] = "snapshot"
+        elif d > today_s:
+            kinds[d] = "future"
+        elif d in covered_days:
+            # 那天在本地抓取覆盖范围内：没有消耗记录就是**真没花**，可以推
+            kinds[d] = "recon"
+        else:
+            # 没被抓取覆盖过，且当天也没有任何消费记录 → 不知道花了没花。
+            # ⚠ 判据只认「覆盖 + 消耗」，不认 income / waste：到账与作废来自
+            # 本地累积文件，不受抓取窗口限制，它们有记录不能证明消耗数据完整。
+            kinds[d] = "gap"
+        if cur < -0.005:
+            # 这一天已经是负数：它自己也不可信，从它开始截断
+            cut_at = d
+            kinds[d] = "unreliable"
+            vals[d] = None
+            cur = 0.0
+            continue
+        vals[d] = round(cur, 4)
+        # 走到前一天：余额 = 今天余额 + 今天消耗 − 今天到账 + 今天作废
+        cur = cur + consume.get(d, 0.0) - income.get(d, 0.0) + waste.get(d, 0.0)
+
+    points = []
+    for d in axis:
+        k = kinds[d]
+        points.append({
+            "date": d,
+            # gap / unreliable 日给 null，让折线真的断开 —— 给个延续值就等于把
+            # 「没数据」画成了「没变化」，那是最容易骗人的一种平滑
+            "remain": None if k in ("gap", "unreliable", "future") else vals[d],
+            "kind": k,
+            "consume": round(consume.get(d, 0.0), 4),
+            "income": round(income.get(d, 0.0), 4),
+            "waste": round(waste.get(d, 0.0), 4),
+        })
+
+    events = []
+    for d, amt in income.items():
+        if amt > 0 and vals.get(d) is not None:
+            events.append({"date": d, "type": "income",
+                           "amount": round(amt, 4), "label": "到账"})
+    for d, amt in waste.items():
+        if amt > 0 and vals.get(d) is not None:
+            events.append({"date": d, "type": "waste",
+                           "amount": round(amt, 4), "label": "过期作废"})
+    events.sort(key=lambda e: (e["date"], e["type"]))
+
+    cov = {"snapshot": 0, "recon": 0, "gap": 0, "unreliable": 0, "future": 0}
+    for d in axis:
+        cov[kinds[d]] = cov.get(kinds[d], 0) + 1
+
+    first_ok = next((p["date"] for p in points if p["remain"] is not None), "")
+    last_ok = next((p["date"] for p in reversed(points) if p["remain"] is not None), "")
+
+    note = ("实测 %d 天 · 推算 %d 天" % (cov.get("snapshot", 0), cov.get("recon", 0)))
+    if cov.get("gap", 0):
+        note += " · 缺口 %d 天" % cov["gap"]
+    if cov.get("unreliable", 0):
+        note += " · 更早 %d 天推算出现负余额，已截断" % cov["unreliable"]
+    note += "（缺口与截断处不连线；窗口外无记录 ≠ 没消耗）"
+
+    return {
+        "points": points,
+        "events": events,
+        "current": round(float(current_remain or 0), 4),
+        "coverage": {
+            "window_days": days,
+            "snapshot_days": cov.get("snapshot", 0),
+            "recon_days": cov.get("recon", 0),
+            "gap_days": cov.get("gap", 0),
+            "unreliable_days": cov.get("unreliable", 0),
+            "first": first_ok,
+            "last": last_ok,
+            "cut_at": cut_at or "",
+            "stable_from": stable_from,
+            "l5_window_days": TREND_L5_WINDOW,
+        },
+        # 前端顶部直接显示这句，免得用户以为曲线全程都是实测
+        "note": note,
+    }
+
+
+
 # ---------- 输出 ----------
 def mask(s, n=8):
     return (s[:n] + "...(共%d字符)" % len(s)) if s else "(空)"
@@ -2265,6 +2609,12 @@ _PANEL_KEYS = {
         "browser_channel", # 取数浏览器偏好（auto/chrome/msedge）
         "summary", "waste", "waste_authoritative",
         "total_remain", "avail_count", "total_used", "today_used",
+        # 累计消耗三口径（见 build_dashboard_data 里的注释）：卡片用 total_used_all，
+        # 「按客户端」的覆盖率提示用 total_used_flow / flow_cover
+        "total_used_all", "total_used_items", "total_used_scope", "l6_gap",
+        # 套餐/订阅型批次：L6 不含、used 每周期归零，靠本地记账累积
+        "total_used_suite", "total_used_grand", "suite_usage",
+        "total_used_flow", "flow_cover",
         "today_used_l5", "today_used_l2", "usage_source", "days_left", "daily_avg",
         "active_days_30d", "daily_avg_window",
         "checkin", "usage_daily", "income_daily", "ledger", "usage_sessions",
@@ -2279,6 +2629,8 @@ _PANEL_KEYS = {
         "model_breakdown", "client_breakdown", "purpose_breakdown",
         "reconcile", "usage_daily", "usage_source",
         "today_used", "today_used_l5", "today_used_l2",
+        # 「按客户端」区块要写清「这只是能追溯到请求的那部分」—— 必须有占比与天数
+        "total_used_all", "total_used_items", "total_used_flow", "flow_cover",
         "sources_health",
     ),
     # 积分批次与生命周期：待用清单（L3 批次）+ 两张 L6 大表 + 权威浪费
@@ -2290,6 +2642,11 @@ _PANEL_KEYS = {
         "expiry_list", "holidays", "holiday_meta",
         "sources_health",
     ),
+    # 余额趋势：实测快照 + 守恒倒推。只带这一块，避免把概览的账本/图表一起拖来
+    "balance": (
+        "version", "generated_at", "balance_trend",
+        "sources_health",
+    ),
 }
 
 # 各面板「自己拥有」的源：局部刷新时只强制重取这些源，其余沿用缓存。
@@ -2299,6 +2656,8 @@ PANEL_FRESH_KEYS = {
     "requests": ("l5",),
     # 该面板现在同时展示「待用清单（L3）」与两张 L6 表 —— 刷新它要两个源一起取
     "lifecycle": ("l6", "resource"),
+    # 趋势要用到三边：当前余额（L3）、日消耗（L5）、作废事件（L6）
+    "balance": ("l5", "l6", "resource"),
 }
 
 
@@ -2352,6 +2711,20 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
 
     st, _ck_err = src.get("checkin") or (None, None)
     st = st or {}
+
+    # ===== 余额快照：每成功取一次数记一条（同一分钟去重）=====
+    # 这一段是「余额趋势」的数据地基。在此之前 record_snapshot() 只被 CLI 的 record
+    # 命令调用，工作台从来没写过 —— snapshots.jsonl 一直不存在，build_timeline()
+    # 拿到空数组、余额时间线永远是空的（2026-10-24 补上）。
+    # 写失败**不能连累整页**：快照是旁路记录，主数据已经拿到了。
+    try:
+        _snap = record_snapshot(packages, st or None)
+        if _snap is not None:
+            snaps = load_snapshots()          # 刚写进去的这条也要进时间线
+            balance, net_change = build_timeline(snaps)
+    except Exception as _se:
+        _FILE_DIAG.setdefault("snapshots.jsonl", {})["write_error"] = \
+            "%s: %s" % (type(_se).__name__, _se)
 
     # ===== 权威层 L5：请求流水（并发已就绪；失败不影响整页）=====
     l5_rows, l5_meta = [], None
@@ -2430,8 +2803,88 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
             if plan_tier_val:
                 break
 
-    # 累计消耗与今日消耗
+    # ---------- 累计消耗：三个口径，用途不同，禁止混用 ----------
+    # 2026-10-25 校准。起因：页面「累计消耗」卡显示 6240.37，「按客户端」合计 7125.06，
+    # 两者差 884.69，用户无法判断哪个是准的 —— 因为**两个都不是累计消耗**：
+    #
+    #   total_used       仅「当前仍有效」批次（L3 视角，40 个包）的已用。
+    #                    已结束的 160 个包不计入 → 拿它当累计会漏掉 2/3。
+    #                    它是「当前手上这批还能用多久」的分母，不是历史总消耗。
+    #   total_used_flow  只有「有请求流水」那 35 天能拆到每次调用的部分。
+    #                    L5 只保 31 天窗口，更早的调用永远拉不回来 → 天生不全。
+    #                    它只能用来做构成拆分（按模型/客户端/用途），不能当总量。
+    #   total_used_all   全部批次（有效 + 已结束）的已用合计 = **真正的累计消耗**。
+    #                    满足闭合式：总容量 = 已用 + 可用余额 + 过期作废
+    #                    （实测 30311.00 = 19014.10 + 3679.56 + 7617.34，误差 0）。
+    #
+    # 优先取 L6（含已结束包，且两表同一次取数、口径自洽）；L6 不可用时退回 L3 并标注。
+    l6_used_valid = round(sum(_num(p.get("used")) for p in l6_valid), 4)
+    l6_used_expired = round(sum(_num(p.get("used")) for p in l6_expired), 4)
     total_used = round(sum(p["used"] for p in packages), 4)
+    if l6_valid or l6_expired:
+        total_used_all = round(l6_used_valid + l6_used_expired, 4)
+        total_used_scope = "L6"          # 全批次视角，含已结束
+    else:
+        total_used_all = total_used
+        total_used_scope = "L3"          # 降级：只有有效批次，累计被低估
+    # 「已结束」不是「作废」—— 这个歧义会让用户以为已结束的批次全是浪费。
+    # 实测 160 个已结束批次里，98 个是**用光**了才结束（浪费 0），
+    # 只有 62 个是**没用完就过期**（这部分才有作废）。拆开给前端解释清楚。
+    _exp_used_up = [p for p in l6_expired if _num(p.get("remain")) <= 0.0001]
+    _exp_wasted = [p for p in l6_expired if _num(p.get("remain")) > 0.0001]
+    total_used_items = {
+        "valid": l6_used_valid if l6_valid else total_used,
+        "expired": l6_used_expired,
+        "valid_count": len(l6_valid),
+        "expired_count": len(l6_expired),
+        # 已结束批次的两种结束方式（供悬浮分解说明）
+        "expired_used_up_count": len(_exp_used_up),
+        "expired_used_up_used": round(sum(_num(p.get("used")) for p in _exp_used_up), 4),
+        "expired_wasted_count": len(_exp_wasted),
+        "expired_wasted_used": round(sum(_num(p.get("used")) for p in _exp_wasted), 4),
+        "expired_wasted_amount": round(sum(_num(p.get("remain")) for p in _exp_wasted), 4),
+        # 闭合式的另外两项也取 L6 —— 必须同源。
+        # 混用 L3 的 total_remain 会凭空多出 500：L3 有「CodeBuddy个人体验版」
+        # （500 分、月底到期，CapacityType=4 套餐用量），而 L6 **有意过滤 CapacityType=4**，
+        # 套餐那批结构上就不在它的覆盖里，两套数一减就差 500。
+        # 结论：L3 余额含体验版（首页该显示它），但闭合只能在同一数据源内做。
+        "remain": round(sum(_num(p.get("remain")) for p in l6_valid), 4),
+        "wasted": round(sum(_num(p.get("remain")) for p in l6_expired), 4),
+        "capacity_valid": round(sum(_num(p.get("size")) for p in l6_valid), 4),
+        "capacity_expired": round(sum(_num(p.get("size")) for p in l6_expired), 4),
+        "total_capacity": round(sum(_num(p.get("size")) for p in l6_valid)
+                                + sum(_num(p.get("size")) for p in l6_expired), 4),
+    }
+    # L3 与 L6 的余额差（实测 = 体验版包 500）。>0 表示有批次不在包明细接口内，
+    # 闭合式要用 items 自己的 remain，这个差值单独说明，不能让用户自己去发现。
+    total_remain_l3 = round(sum(g["remain_sum"] for g in groups), 4)
+    l6_gap = {
+        "diff": round(total_remain_l3 - total_used_items["remain"], 4),
+        "l3_remain": total_remain_l3,
+        "l6_remain": total_used_items["remain"],
+    }
+    # 套餐/订阅型批次的消耗：L6 结构上不含（CapacityType=4 被有意过滤），
+    # 且它的 used 每周期归零 → 只能本地按 resource_id 攒。见 accumulate_suite_usage。
+    suite = accumulate_suite_usage(packages, list(l6_valid) + list(l6_expired))
+    total_used_suite = suite["total"]
+    # 用户问的「实际用掉多少」= L6 全部批次已用 + 套餐本地记账。
+    # 只有前者参与闭合式（套餐是周期额度，不属于同一个池子）。
+    total_used_grand = round(total_used_all + total_used_suite, 4)
+    # 「可追溯到单次调用」的部分 = L5 归档流水合计。它天生不全（窗口 31 天），
+    # 所以必须连同「覆盖几天、占累计多少」一起给出，否则用户会把流水合计当总量 ——
+    # 这正是 7125.06 vs 6240.37 那次困惑的直接来源。
+    total_used_flow = round(sum(_num(r.get("credit")) for r in (l5_rows or [])), 4)
+    _flow_days = sorted(set(str(r.get("requestTime") or "")[:10]
+                            for r in (l5_rows or []) if r.get("requestTime")))
+    flow_cover = {
+        "days": len(_flow_days),
+        "first": _flow_days[0] if _flow_days else "",
+        "last": _flow_days[-1] if _flow_days else "",
+        "credit": total_used_flow,
+        "pct": round(total_used_flow / total_used_all * 100, 1) if total_used_all else 0.0,
+        # 无法追溯的部分：只有包级记账，拆不出模型/客户端
+        "untraceable": round(total_used_all - total_used_flow, 4),
+    }
     today_str = today_date()
 
     # 精确消耗（本地 session_usage 表）—— 留守观测层，用于会话明细与预测
@@ -2525,7 +2978,12 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
     # 走 real_streak_days() 是刻意的 —— 签到弹框用同一个入口，两处口径才不会漂。
     real_streak = real_streak_days(checkin_dates_raw, pkg_checkin, today_str,
                                    merged=accumulated_checkin)
-    income_events = accumulate_income(packages)
+    # extra 传 L6 两张表：已经结束的包 L3 从来看不见，到账只能靠这里补
+    income_events = accumulate_income(packages, extra=list(l6_valid) + list(l6_expired))
+    # 余额趋势：实测快照 + 守恒倒推（口径与「缺口不连线」的取舍见 build_balance_trend）
+    balance_trend = build_balance_trend(
+        round(sum(g["remain_sum"] for g in groups), 4),
+        l6_expired, income_events, l5_rows, snapshots=snaps, l5_meta=l5_meta)
     ledger = build_ledger({d["date"]: d["credit"] for d in udaily}, packages, accumulated_checkin, daily_credit_val)
     # 收入日数据（签到 + 包到账，按天），供收入日历热力图使用
     income_daily = [{"date": r["date"], "income": r["income"]} for r in ledger]
@@ -2604,7 +3062,16 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
         ],
         "total_remain": round(sum(g["remain_sum"] for g in groups), 4),
         "capacity_note": capacity_note,     # 订阅型口径切换的说明（含"若用累计会多算多少"）
-        "total_used": total_used,
+        "total_used": total_used,          # 仅当前有效批次（L3 视角）
+        "total_used_all": total_used_all,  # 全部批次（含已结束）= 真正的累计消耗
+        "total_used_items": total_used_items,
+        "total_used_scope": total_used_scope,
+        "l6_gap": l6_gap,                  # L3 余额与 L6 的差（体验版等不在明细里的批次）
+        "total_used_flow": total_used_flow,  # 可追溯到单次调用的部分（天生不全）
+        "flow_cover": flow_cover,
+        "total_used_suite": total_used_suite,   # 套餐/订阅型（本地记账）
+        "total_used_grand": total_used_grand,   # L6 已用 + 套餐 = 真正实际用掉
+        "suite_usage": suite,
         "today_used": today_used,
         "today_used_l5": today_used_l5,
         "today_used_l2": today_used_l2,
@@ -2644,6 +3111,7 @@ def build_dashboard_data(token, uid, account, sync_days=None, hub=None, fresh=()
             "end_time": st.get("end_time", ""),
         },
         "balance_timeline": balance,
+        "balance_trend": balance_trend,
         "net_change": net_change,
         "expiry_list": expiry_list,
         # ---- 新增（v1.3.0）----
@@ -2956,7 +3424,15 @@ def sync_requests(token, uid, days=REQ_MAX_WINDOW_DAYS, page_size=REQ_PAGE_SIZE)
 
     # 展示用：历史行 + 本次行（本次行保留 input，仅在内存中）
     display = dict(merged_store)
-    display.update(fresh_by_id)
+    for rid, r in fresh_by_id.items():
+        # 本次抓到的行要保留 input（仅内存），但 fetched_at 必须回填：
+        # 归档行有它、本次行原本没有。而 fetched_at 是「这次抓取覆盖了哪段时间」
+        # 的唯一证据 —— 余额趋势靠它区分「真没花」和「没抓到」。
+        # 早先直接 display.update(fresh_by_id)，本次抓到的行全丢了 fetched_at，
+        # 于是 31 天窗口内的历史突然变成「没抓过」，曲线被切成一串假缺口（2026-10-24 修）。
+        rec = dict(r)
+        rec["fetched_at"] = (merged_store.get(rid) or {}).get("fetched_at") or fetched_at
+        display[rid] = rec
     rows = sorted(display.values(), key=_req_sort_key, reverse=True)
 
     meta = dict(meta or {})

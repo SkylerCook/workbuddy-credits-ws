@@ -594,7 +594,7 @@ class BrowserBridge:
                 from playwright.sync_api import sync_playwright
             except Exception as e:
                 # ⚠️ 必须在 return 之前让 _ready 就位，否则调用方会白等满 START_TIMEOUT
-                # （页面表现就是「三个面板一直转圈」，而不是给出有用的错误）。
+                # （页面表现就是「四个面板一直转圈」，而不是给出有用的错误）。
                 self._start_error = RuntimeError(
                     "当前 Python 解释器未安装 Playwright（%s）。浏览器桥依赖它："
                     "pip install playwright（浏览器用系统 Chrome 或 Edge，无需再下载内核）" % e)
