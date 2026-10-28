@@ -1632,8 +1632,26 @@
             const esc = function (s) { return String(s).replace(/</g, '&lt;'); };
             (function poll() {
               if (Date.now() - t0 > 180000) {
-                if (txt) txt.innerHTML = '升级耗时较长，请刷新页面确认版本；'
-                  + '或手动运行 <code>python update.py</code> 查看实时进度。';
+                // 超时不等于失败：再探一次版本，区分「服务没重启（页面刷了也没用）」
+                // 与「服务在跑但版本没变」。老文案只让用户「刷新页面」，而服务
+                // 已停时刷新必然失败 —— 用户只能自己猜出「双击启动器」这一步。
+                fetch('/api/version', { cache: 'no-store' })
+                  .then(function (r) { return r.ok ? r.json() : null; })
+                  .then(function (v) {
+                    if (v && v.version && v.version !== before) {
+                      location.reload();
+                      return;
+                    }
+                    if (txt) txt.innerHTML = v
+                      ? '服务仍在 v' + v.version + '（升级未生效）。请手动运行 '
+                        + '<code>python update.py</code> 查看原因。'
+                      : '服务已停止（升级文件已安装，但没有自动起来）。'
+                        + '<b>请双击工作台快捷方式重新启动</b>。';
+                  })
+                  .catch(function () {
+                    if (txt) txt.innerHTML = '服务已停止（升级文件已安装，但没有自动起来）。'
+                      + '<b>请双击工作台快捷方式重新启动</b>。';
+                  });
                 return;
               }
               fetch('/api/version', { cache: 'no-store' })

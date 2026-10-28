@@ -489,13 +489,20 @@ def _ask_quit(port, timeout=2.0):
 
 
 def stop_service(port):
-    killed = []
+    """停掉占用端口的旧服务，返回 `(stopped, killed, polite)`。
+
+    成败判据是**端口是否真的空了**，不是「杀了几个进程」：
+    礼貌停机（`/api/quit`）成功时 `killed` 必然为空，若拿它当成败判据，
+    就会把「已正常停机」误判成「没停掉」而跳过重启 —— v1.7.10~v1.7.29 的
+    「工作台内点完立即升级、必须再双击启动器才有新版本」正是这个 bug。
+    """
     # 先礼貌停机：让旧服务留日志 + 清运行标记，避免强杀造成「异常终止」误报
     if _ask_quit(port):
         for _ in range(16):
             time.sleep(0.25)
             if not listener_pids(port):
-                return killed
+                return True, [], True
+    killed = []
     for pid in listener_pids(port):
         if not is_python_proc(pid):
             continue
@@ -508,7 +515,17 @@ def stop_service(port):
             killed.append(pid)
         except Exception:
             pass
-    return killed
+    return (not listener_pids(port)), killed, False
+
+
+def probe_version(port=PORT, timeout=3.0):
+    """探服务当前版本（重启后自证「新代码真的加载了」）。拿不到返回 None。"""
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open("http://127.0.0.1:%d/api/version" % port, timeout=timeout) as r:
+            return (json.loads(r.read().decode("utf-8")) or {}).get("version")
+    except Exception:
+        return None
 
 
 def start_service():
@@ -770,13 +787,20 @@ def main():
         print("服务：更新前未在运行，未做改动。下次打开工作台即为新版本。")
         return 0
 
-    killed = stop_service(PORT)
-    if not killed:
-        print("服务：检测到 %d 端口被占用，但不是 python 进程，未处理。请手动确认。" % PORT)
+    stopped, killed, polite = stop_service(PORT)
+    if not stopped:
+        print("服务：%d 仍被占用，且占用者不是 python 进程，未处理。请手动关闭后重试。" % PORT)
         return 0
-    print("服务：已停止旧进程 %s，正在重启…" % ", ".join(str(p) for p in killed))
+    if polite:
+        print("服务：旧服务已礼貌退出，正在重启…")
+    else:
+        print("服务：已停止旧进程 %s，正在重启…" % ", ".join(str(p) for p in killed))
     ok = start_service()
-    print("服务：%s" % ("已重启（新代码已加载）" if ok else "重启失败，请双击启动器手动启动"))
+    if ok:
+        cur = probe_version()
+        print("服务：已重启（新代码已加载%s）" % ("，当前 v%s" % cur if cur else ""))
+    else:
+        print("服务：重启失败，请双击启动器手动启动")
     return 0 if ok else 1
 
 
